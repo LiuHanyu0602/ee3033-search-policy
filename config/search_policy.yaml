@@ -1,0 +1,7 @@
+search_policy_dry_run:
+  ros__parameters:
+    map_topic: /map
+    map_frame: map
+    robot_frame: base_footprint
+    navigate_action: /navigate_to_pose
+    status_period_s: 2.0
