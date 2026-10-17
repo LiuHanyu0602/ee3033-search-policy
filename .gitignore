@@ -1,0 +1,32 @@
+# Python caches and environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ROS 2 / colcon outputs
+build/
+install/
+log/
+.ros/
+
+# Editors and operating-system metadata
+.vscode/
+.idea/
+.DS_Store
+
+# Generated training data and intermediate maps
+outputs/
+
+# Large or regenerable model checkpoints
+*.pt
+
+# ROS bag data
+*.bag
+*.db3
+metadata.yaml
+
+# Temporary files
+*.tmp
+*.bak
+*~
