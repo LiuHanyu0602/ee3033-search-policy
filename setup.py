@@ -29,13 +29,24 @@ setup(
     description="Learned viewpoint selection for EE3033 target search.",
     license="MIT",
     tests_require=["pytest"],
+#     entry_points={
+#         "console_scripts": [
+#             (
+#                 "search_policy_dry_run = "
+#                 "ee3033_search_policy.search_policy_node:main"
+#             ),
+#             "planner_test = ee3033_search_policy.planner_test_node:main",
+#         ],
+#     },
+# )
     entry_points={
-        "console_scripts": [
-            (
-                "search_policy_dry_run = "
-                "ee3033_search_policy.search_policy_node:main"
-            ),
-            "planner_test = ee3033_search_policy.planner_test_node:main",
-        ],
-    },
+    "console_scripts": [
+        (
+            "search_policy_dry_run = "
+            "ee3033_search_policy.search_policy_node:main"
+        ),
+        "planner_test = ee3033_search_policy.planner_test_node:main",
+        "target_checker = ee3033_search_policy.target_checker:main",
+    ],
+},
 )
