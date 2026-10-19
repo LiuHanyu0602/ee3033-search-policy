@@ -334,3 +334,58 @@ the map frame versus Nav2's global frame, and network discovery. For insufficien
 safe points, inspect the map and configured clearance/separation rather than
 treating unknown cells as free. The test does not silently reduce clearance,
 change planner IDs, or retry different goals.
+
+## Target Detection and Stop Integration
+
+### Overview
+
+The target detection and stop integration modules connect the Raspberry Pi's YOLOv8n-320 NCNN detector to the autonomous search controller.
+
+The detection logic is implemented separately from the MLP waypoint-selection algorithm.
+
+### ROS 2 Interfaces
+
+| Topic | Message Type | Purpose |
+|---|---|---|
+| `/yolo/detections` | `std_msgs/msg/String` | JSON detection results published by the YOLO NCNN node |
+| `/target_found` | `std_msgs/msg/Bool` | Confirmed target-detection status |
+
+### Target Checker
+
+`target_checker.py` subscribes to `/yolo/detections` and validates incoming detections.
+
+Default configuration:
+
+- Target class: `bottle`
+- Minimum detection confidence: `0.70`
+- Required consecutive detection frames: `3`
+- Output frequency: `5 Hz`
+
+The checker verifies distinct frame timestamps to avoid counting duplicate images.
+
+Once the target is confirmed, `/target_found` remains `True` until the node is restarted.
+
+Run the checker after building and sourcing the ROS 2 workspace:
+
+```bash
+ros2 run ee3033_search_policy target_checker
+```
+
+### Stop Integration
+
+`target_stop_guard.py` provides stop-handling logic for the autonomous search controller.
+
+When `/target_found=True` is received, the search controller should:
+
+1. Stop issuing new search waypoints.
+2. Request cancellation of the active Nav2 `NavigateToPose` goal.
+3. Check the final navigation action result.
+4. Verify that the robot has stopped moving.
+
+The stop guard must be integrated into the same controller that owns the active Nav2 navigation request. It is not a standalone executable.
+
+### Current Integration Status
+
+The Target Checker implementation is available, but end-to-end detection and physical stopping have not yet been validated.
+
+Integration with the runtime MLP search controller is still required before autonomous stop behavior can be confirmed.
