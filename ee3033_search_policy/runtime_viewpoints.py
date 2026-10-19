@@ -54,10 +54,14 @@ def clearance_map(free_mask, resolution):
         distance[row, col] = 0.0
         heapq.heappush(queue, (0.0, int(row), int(col)))
 
+    # Unit-cost 8-neighbour propagation is the Chebyshev distance.  It is a
+    # lower bound on Euclidean clearance, which is intentionally conservative
+    # for candidate safety.  Using sqrt(2) on diagonals would be a closer
+    # approximation but can overestimate Euclidean distance in other slopes.
     moves = (
         (-1, 0, 1.0), (1, 0, 1.0), (0, -1, 1.0), (0, 1, 1.0),
-        (-1, -1, sqrt(2.0)), (-1, 1, sqrt(2.0)),
-        (1, -1, sqrt(2.0)), (1, 1, sqrt(2.0)),
+        (-1, -1, 1.0), (-1, 1, 1.0),
+        (1, -1, 1.0), (1, 1, 1.0),
     )
     while queue:
         value, row, col = heapq.heappop(queue)
