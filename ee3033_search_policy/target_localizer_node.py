@@ -12,7 +12,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.duration import Duration
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import (\n    DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy,\n)
 from rclpy.time import Time
 from tf2_ros import Buffer, TransformException, TransformListener
 
