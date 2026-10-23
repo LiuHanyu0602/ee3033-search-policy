@@ -76,6 +76,8 @@ class TargetLocalizer(Node):
         self.scan_receive_time = None
         self.detector_status = 'UNKNOWN'
         self.latest_position = None
+        self.latest_confidence = 0.0
+        self.latest_method = ''
 
         sensor_qos = QoSProfile(
             depth=1,
@@ -85,8 +87,16 @@ class TargetLocalizer(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
+        latched = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
         self.position_pub = self.create_publisher(
-            PointStamped, str(p('position_topic')), 10
+            PointStamped, str(p('position_topic')), latched
+        )
+        self.candidate_pub = self.create_publisher(
+            PointStamped, '/target_position_candidate', 10
         )
         self.confidence_pub = self.create_publisher(
             Float32, '/target_confidence', 10
@@ -265,7 +275,9 @@ class TargetLocalizer(Node):
             return
 
         self.latest_position = point
-        self.position_pub.publish(point)
+        self.latest_confidence = float(msg.similarity)
+        self.latest_method = method
+        self.candidate_pub.publish(point)
         confidence = Float32()
         confidence.data = float(msg.similarity)
         self.confidence_pub.publish(confidence)
@@ -278,6 +290,12 @@ class TargetLocalizer(Node):
             position = self.latest_position
             position.header.stamp = self.get_clock().now().to_msg()
             self.position_pub.publish(position)
+            confidence = Float32()
+            confidence.data = self.latest_confidence
+            self.confidence_pub.publish(confidence)
+            source = String()
+            source.data = self.latest_method
+            self.method_pub.publish(source)
 
 
 def main(args=None):
