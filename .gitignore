@@ -31,3 +31,7 @@ metadata.yaml
 *.tmp
 *.bak
 *~
+
+# Native crash dumps
+core
+core.*
