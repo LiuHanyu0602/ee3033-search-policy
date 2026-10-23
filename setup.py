@@ -7,7 +7,7 @@ package_name = "ee3033_search_policy"
 
 setup(
     name=package_name,
-    version="0.2.0",
+    version="0.3.0",
     packages=find_packages(exclude=("test",)),
     data_files=[
         (
@@ -28,25 +28,17 @@ setup(
     maintainer_email="liuhanyu0602@users.noreply.github.com",
     description="Learned viewpoint selection for EE3033 target search.",
     license="MIT",
-    tests_require=["pytest"],
-#     entry_points={
-#         "console_scripts": [
-#             (
-#                 "search_policy_dry_run = "
-#                 "ee3033_search_policy.search_policy_node:main"
-#             ),
-#             "planner_test = ee3033_search_policy.planner_test_node:main",
-#         ],
-#     },
-# )
     entry_points={
-    "console_scripts": [
-        (
-            "search_policy_dry_run = "
-            "ee3033_search_policy.search_policy_node:main"
-        ),
-        "planner_test = ee3033_search_policy.planner_test_node:main",
-        "target_checker = ee3033_search_policy.target_checker:main",
-    ],
-},
+        "console_scripts": [
+            (
+                "search_policy_dry_run = "
+                "ee3033_search_policy.search_policy_node:main"
+            ),
+            "planner_test = ee3033_search_policy.planner_test_node:main",
+            "target_checker = ee3033_search_policy.target_checker:main",
+            "target_localizer = ee3033_search_policy.target_localizer_node:main",
+            "mission_manager = ee3033_search_policy.mission_manager_node:main",
+            "search_manager = ee3033_search_policy.search_manager_node:main",
+        ],
+    },
 )
