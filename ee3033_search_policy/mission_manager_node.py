@@ -189,17 +189,20 @@ class MissionManager(Node):
         self._set_state(MissionState.IDLE, 'MISSION_RESET')
         return self._reply(response, True, 'Mission reset')
 
+    def _publish_target_report(self, msg):
+        report = String()
+        report.data = (
+            f'TARGET_POSITION frame={msg.header.frame_id} '
+            f'x={msg.point.x:.3f} y={msg.point.y:.3f}'
+        )
+        self.target_report_pub.publish(report)
+        self.notification_pub.publish(report)
+        self.get_logger().info(report.data)
+
     def _target_position_callback(self, msg):
         self.last_target_position = msg
         if self.state == MissionState.TARGET_FOUND:
-            report = String()
-            report.data = (
-                f'TARGET_POSITION frame={msg.header.frame_id} '
-                f'x={msg.point.x:.3f} y={msg.point.y:.3f}'
-            )
-            self.target_report_pub.publish(report)
-            self.notification_pub.publish(report)
-            self.get_logger().info(report.data)
+            self._publish_target_report(msg)
 
     def _search_finished_callback(self, msg):
         if msg.data and self.state == MissionState.SEARCHING:
@@ -215,6 +218,8 @@ class MissionManager(Node):
             MissionState.TARGET_FOUND,
             'TARGET_FOUND: stop navigation and report target position',
         )
+        if self.last_target_position is not None:
+            self._publish_target_report(self.last_target_position)
 
 
 def main(args=None):
