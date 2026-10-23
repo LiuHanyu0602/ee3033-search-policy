@@ -22,7 +22,7 @@ from tf2_ros import Buffer, TransformException, TransformListener
 
 from .coverage_memory import CoverageMemory
 from .feature_builder import build_candidate_features, make_shortlist, turn_angles
-from .map_utils import GridGeometry, occupancy_array
+from .map_utils import GridGeometry, occupancy_array, world_to_grid
 from .model import TinySearchPolicy
 from .nav2_client import Nav2Client
 from .policy_decision import select_with_fallback
@@ -105,6 +105,7 @@ class SearchManager(Node):
         self.current_pose = self.active_plan = self.active_navigation = None
         self.selected_index = self.observation_deadline = None
         self.busy = self.finished = False
+        self.retry_after = 0.0
 
         latched = QoSProfile(
             depth=1, reliability=ReliabilityPolicy.RELIABLE,
@@ -211,7 +212,8 @@ class SearchManager(Node):
                 self._finish_observation()
             return
         if (self.mission_state != 'SEARCHING' or self.finished or self.busy or
-                self.memory is None or not self.stop_guard.may_dispatch()):
+                self.memory is None or not self.stop_guard.may_dispatch() or
+                time.monotonic() < self.retry_after):
             return
         if self.memory.coverage_fraction >= self.coverage_target:
             self._finish_search('COVERAGE_TARGET_REACHED')
@@ -219,9 +221,20 @@ class SearchManager(Node):
         pose = self._robot_pose()
         if pose is None:
             self._status('WAITING_FOR_TF')
-        elif not self.nav2.planner_is_ready():
-            self._status('WAITING_FOR_PLANNER')
         else:
+            try:
+                world_to_grid(pose[0], pose[1], self.geometry)
+            except ValueError:
+                self._status('ROBOT_POSE_OUTSIDE_MAP')
+                self.get_logger().error(
+                    'Robot TF position is outside the occupancy map; '
+                    'set a valid localization pose before planning',
+                    throttle_duration_sec=2.0,
+                )
+                return
+        if pose is not None and not self.nav2.planner_is_ready():
+            self._status('WAITING_FOR_PLANNER')
+        elif pose is not None:
             self._begin_decision(pose)
 
     def _begin_decision(self, pose):
@@ -271,6 +284,16 @@ class SearchManager(Node):
             result = future.result()
             if result.success:
                 self.path_distances[index] = result.path_length_m
+            elif result.accepted is False:
+                self.busy = False
+                self.retry_after = time.monotonic() + 5.0
+                self._status('WAITING_FOR_PLANNER_ACTIVE')
+                self.get_logger().error(
+                    'Nav2 planner rejected the request; activate planner_server '
+                    'before search',
+                    throttle_duration_sec=2.0,
+                )
+                return
             else:
                 self._failure(index, result.error)
         except Exception as exc:
