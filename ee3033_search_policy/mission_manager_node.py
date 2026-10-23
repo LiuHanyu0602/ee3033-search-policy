@@ -47,6 +47,9 @@ class MissionManager(Node):
         self.notification_pub = self.create_publisher(
             String, '/mission/notification', latched
         )
+        self.target_report_pub = self.create_publisher(
+            String, '/target_report', latched
+        )
 
         self.create_subscription(
             Bool, '/target_found', self._target_found_callback, latched
@@ -188,6 +191,15 @@ class MissionManager(Node):
 
     def _target_position_callback(self, msg):
         self.last_target_position = msg
+        if self.state == MissionState.TARGET_FOUND:
+            report = String()
+            report.data = (
+                f'TARGET_POSITION frame={msg.header.frame_id} '
+                f'x={msg.point.x:.3f} y={msg.point.y:.3f}'
+            )
+            self.target_report_pub.publish(report)
+            self.notification_pub.publish(report)
+            self.get_logger().info(report.data)
 
     def _search_finished_callback(self, msg):
         if msg.data and self.state == MissionState.SEARCHING:
