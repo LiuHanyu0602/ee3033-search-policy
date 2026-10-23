@@ -453,9 +453,11 @@ subscribe to it.
 ### Target outputs
 
 - `/target_found`: latched confirmed detection
-- `/target_position`: `geometry_msgs/PointStamped` in `map`
+- `/target_position_candidate`: unconfirmed per-frame coordinate estimate
+- `/target_position`: latched confirmed `geometry_msgs/PointStamped` in `map`
 - `/target_confidence`: detector similarity
 - `/target_position_method`: `lidar_association` or `ground_plane`
+- `/target_report`: latched human-readable final frame/x/y report
 
 ### Unified launch
 
