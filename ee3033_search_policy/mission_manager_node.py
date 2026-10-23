@@ -57,6 +57,9 @@ class MissionManager(Node):
             self._target_position_callback,
             10,
         )
+        self.create_subscription(
+            Bool, '/search/finished', self._search_finished_callback, latched
+        )
 
         services = {
             '/mission/start_mapping': self._start_mapping,
@@ -185,6 +188,13 @@ class MissionManager(Node):
 
     def _target_position_callback(self, msg):
         self.last_target_position = msg
+
+    def _search_finished_callback(self, msg):
+        if msg.data and self.state == MissionState.SEARCHING:
+            self._set_state(
+                MissionState.FINISHED,
+                'SEARCH_COMPLETE: target was not detected in observable space',
+            )
 
     def _target_found_callback(self, msg):
         if not msg.data or self.state != MissionState.SEARCHING:
