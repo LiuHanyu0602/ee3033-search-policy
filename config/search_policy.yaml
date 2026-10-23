@@ -5,3 +5,14 @@ search_policy_dry_run:
     robot_frame: base_footprint
     navigate_action: /navigate_to_pose
     status_period_s: 2.0
+
+target_checker:
+  ros__parameters:
+    status_topic: /detector/status
+    target_info_topic: /detector/target_info
+    target_found_topic: /target_found
+    similarity_threshold: 0.85
+    required_frames: 3
+    max_frame_gap_s: 1.0
+    status_timeout_s: 1.0
+    publish_period_s: 0.2
