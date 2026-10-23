@@ -73,7 +73,7 @@ class MissionManager(Node):
             '/mission/finish': self._finish,
             '/mission/reset': self._reset,
         }
-        self.services = [
+        self._mission_services = [
             self.create_service(Trigger, name, callback)
             for name, callback in services.items()
         ]
