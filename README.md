@@ -389,3 +389,103 @@ The stop guard must be integrated into the same controller that owns the active 
 The Target Checker implementation is available, but end-to-end detection and physical stopping have not yet been validated.
 
 Integration with the runtime MLP search controller is still required before autonomous stop behavior can be confirmed.
+
+
+## Full ROS 2 runtime interface (development branch)
+
+The `full-runtime-integration` branch contains the complete software-facing
+Stage-2 loop. It is intentionally safe by default: the search manager publishes
+its selected goal but cannot send NavigateToPose unless
+`navigation_enabled:=true` and `/mission/state` is `SEARCHING`.
+
+### Runtime data flow
+
+1. `/map` and `map -> base_footprint` generate safe oriented viewpoints.
+2. Coverage memory computes new visible area for every viewpoint.
+3. Nav2 `/compute_path_to_pose` supplies real path distances.
+4. The training-equivalent 32-candidate shortlist and 12 features are built.
+5. Tiny MLP selects a viewpoint; invalid inference falls back to the immediate
+   time-aware score.
+6. Nav2 executes one goal. Coverage is committed only after success and the
+   observation dwell time.
+7. Navigation failure counts temporarily blacklist repeated unreachable goals.
+8. A confirmed target latches `/target_found`, cancels the active goal and
+   prevents all later dispatch.
+9. RGB bearing plus LaserScan (or calibrated ground-plane fallback) publishes
+   the target in the map frame.
+
+### Nodes
+
+| Executable | Role |
+| --- | --- |
+| `target_checker` | Confirms real Balance detector TRACKING messages over consecutive frames |
+| `target_localizer` | Converts image bearing and range to `/target_position` in `map` |
+| `mission_manager` | Implements mapping, wait, search, pause and finish states |
+| `search_manager` | Runs viewpoint generation, planning, MLP selection, navigation and memory |
+
+### Mission services
+
+- `/mission/start_mapping`
+- `/mission/finish_mapping`
+- `/mission/start_search`
+- `/mission/pause`
+- `/mission/resume`
+- `/mission/finish`
+- `/mission/reset`
+
+All use `std_srvs/srv/Trigger`. The state is latched on
+`/mission/state`. `/mission/notification` is the hardware-independent
+notification interface; a later Balance-specific LED/buzzer adapter should
+subscribe to it.
+
+### Search interfaces
+
+| Name | Type | Purpose |
+| --- | --- | --- |
+| `/search/status` | `std_msgs/String` | Current planner/navigation state |
+| `/search/coverage_fraction` | `std_msgs/Float32` | Remembered observable coverage |
+| `/search/selected_goal` | `geometry_msgs/PoseStamped` | Selected viewpoint for RViz |
+| `/search/finished` | `std_msgs/Bool` | Coverage/no-gain completion |
+| `/search/reset_memory` | `std_srvs/Trigger` | Clear coverage and failure blacklist |
+| `/search/save_memory` | `std_srvs/Trigger` | Save memory to configured NPZ |
+| `/search/load_memory` | `std_srvs/Trigger` | Restore matching-map memory |
+
+### Target outputs
+
+- `/target_found`: latched confirmed detection
+- `/target_position`: `geometry_msgs/PointStamped` in `map`
+- `/target_confidence`: detector similarity
+- `/target_position_method`: `lidar_association` or `ground_plane`
+
+### Unified launch
+
+Safe interface-only mode:
+
+```bash
+ros2 launch ee3033_search_policy full_runtime.launch.py
+```
+
+Physical navigation is an explicit later opt-in:
+
+```bash
+ros2 launch ee3033_search_policy full_runtime.launch.py \
+  navigation_enabled:=true
+```
+
+Do not enable navigation until the branch has been built and validated with
+the robot raised or in a controlled test area.
+
+### Parameters that still require physical calibration
+
+Software interfaces are present, but these values cannot be inferred safely
+without the robot:
+
+- `candidate_clearance_m` versus the real footprint and Nav2 inflation;
+- `camera_pitch_down_rad` and camera optical-axis convention;
+- `camera_yaw_offset_rad` and `laser_yaw_offset_rad`;
+- whether the 2-D laser intersects the target rather than the wall behind it;
+- camera FOV/range and navigation speed/time assumptions;
+- the robot-specific LED or buzzer command interface.
+
+Until calibration, `target_position_method` must be logged with every reported
+coordinate and the target coordinate must be treated as provisional.
