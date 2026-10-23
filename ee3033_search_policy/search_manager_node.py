@@ -145,8 +145,8 @@ class SearchManager(Node):
             signature = (geometry, hash(values.tobytes()))
             if signature == self.map_signature:
                 return
-            if self.active_navigation is not None:
-                self.get_logger().warning('Map update deferred during navigation')
+            if self.busy or self.active_navigation is not None:
+                self.get_logger().warning('Map update deferred during an active decision')
                 return
             candidates = generate_viewpoints_from_grid(
                 values, geometry, self.spacing, self.clearance,
@@ -317,7 +317,9 @@ class SearchManager(Node):
             f'Selected {index} by {method}; path={self.path_distances[index]:.2f}m'
         )
         if not self.navigation_enabled:
-            self.busy = False
+            # Hold after one complete decision so dry-run does not repeatedly
+            # query Nav2 against an unchanged state.
+            self.busy = True
             self._status('DRY_RUN_SELECTION_READY')
             return
         if not self.stop_guard.may_dispatch():
@@ -392,7 +394,7 @@ class SearchManager(Node):
         self.memory.reset()
         self.failure_counts.fill(0)
         self.failure_times.fill(-np.inf)
-        self.finished = False
+        self.finished, self.busy = False, False
         if self.stop_guard.active_request is None:
             self.stop_guard.reset()
         self._progress()
