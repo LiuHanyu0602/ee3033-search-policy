@@ -38,6 +38,26 @@ target_localizer:
     maximum_range_m: 4.0
     minimum_ground_angle_rad: 0.0873
 
+    # Target Localization V2
+    # Keep IMU correction disabled until the physical topic, frame,
+    # pitch sign, and zero offset have been measured.
+    imu_topic: /imu
+    use_imu_pitch: false
+    imu_pitch_sign: 1.0
+    imu_pitch_offset_rad: 0.0
+    imu_timeout_s: 0.25
+
+    # Reject noisy scan points and likely wall returns behind short targets.
+    minimum_lidar_points: 2
+    lidar_ground_gate_m: 0.35
+
+    # Multi-view bearing triangulation and robust coordinate fusion.
+    max_observations: 30
+    minimum_multiview_observations: 3
+    minimum_baseline_m: 0.25
+    ransac_threshold_m: 0.20
+    fusion_gate_m: 0.35
+
 mission_manager:
   ros__parameters: {}
 
