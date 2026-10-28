@@ -491,3 +491,12 @@ without the robot:
 
 Until calibration, `target_position_method` must be logged with every reported
 coordinate and the target coordinate must be treated as provisional.
+
+
+## Return to origin (`return-to-origin-integration`)
+
+After a confirmed target, the search manager cancels its active Nav2 search goal. A home pose is saved in the `map` frame at the beginning of the search (at first available valid TF). If `navigation_enabled:=true` and `return_home_enabled:=true`, the controller waits for a verified search navigation result (`CANCELED` or `SUCCEEDED`, accepted and not locally timed out) before sending a new `NavigateToPose` goal back to the saved start pose. If no search goal was active, it can return directly. An unknown/timeout/cancellation failure prevents automatic return; an Action cancellation acknowledgement alone is not enough. It reuses the **same** Nav2 client, preventing competing action owners inside this package.
+
+`/search/return_status` (`std_msgs/msg/String`, reliable/transient-local) reports `HOME_RECORDED`, `WAITING_FOR_SEARCH_STOP`, `WAITING_FOR_NAVIGATOR`, `RETURNING`, `SUCCEEDED`, or `FAILED_*`. Mission states include `TARGET_FOUND -> RETURNING_HOME -> FINISHED` and `RETURN_FAILED`. The saved home pose is the **search starting pose**, not the target coordinate or an origin hardcoded to (0,0). The default `navigation_enabled:=false` remains safe: no drive or return is sent unless explicitly enabled. `return_home_enabled:=false` disables automatic return.
+
+**Robot acceptance is still required:** verify stable TF, Nav2 lifecycle and goal cancellation, real physical stop, correct saved start pose, map consistency and actual return accuracy. Nav2 Action results alone do not prove physical standstill. Do not enable live navigation without an on-site operator and safe test area.
