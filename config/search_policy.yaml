@@ -74,6 +74,7 @@ search_manager:
 
     # Remains false unless launch argument navigation_enabled:=true is given.
     navigation_enabled: false
+    return_home_enabled: true
     weights_path: ''
 
     # Must later be calibrated against the physical robot and camera.
