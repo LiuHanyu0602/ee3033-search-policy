@@ -18,6 +18,8 @@ class MissionState(str, Enum):
     SEARCHING = 'SEARCHING'
     PAUSED = 'PAUSED'
     TARGET_FOUND = 'TARGET_FOUND'
+    RETURNING_HOME = 'RETURNING_HOME'
+    RETURN_FAILED = 'RETURN_FAILED'
     FINISHED = 'FINISHED'
 
 
@@ -61,6 +63,9 @@ class MissionManager(Node):
             10,
         )
         self.create_subscription(
+            String, '/search/return_status', self._return_status_callback, latched
+        )
+        self.create_subscription(
             Bool, '/search/finished', self._search_finished_callback, latched
         )
 
@@ -99,6 +104,8 @@ class MissionManager(Node):
             MissionState.SEARCHING,
             MissionState.PAUSED,
             MissionState.TARGET_FOUND,
+            MissionState.RETURNING_HOME,
+            MissionState.RETURN_FAILED,
             MissionState.FINISHED,
         )
         self.mapping_pub.publish(mapping)
@@ -210,6 +217,16 @@ class MissionManager(Node):
                 MissionState.FINISHED,
                 'SEARCH_COMPLETE: target was not detected in observable space',
             )
+
+    def _return_status_callback(self, msg):
+        status = msg.data.strip().upper()
+        if status == 'RETURNING' and self.state == MissionState.TARGET_FOUND:
+            self._set_state(MissionState.RETURNING_HOME, 'RETURN_HOME_STARTED')
+        elif status == 'SUCCEEDED' and self.state == MissionState.RETURNING_HOME:
+            self._set_state(MissionState.FINISHED, 'RETURN_HOME_SUCCEEDED')
+        elif status.startswith('FAILED_') and self.state in (
+                MissionState.TARGET_FOUND, MissionState.RETURNING_HOME):
+            self._set_state(MissionState.RETURN_FAILED, f'RETURN_HOME_{status}')
 
     def _target_found_callback(self, msg):
         if not msg.data or self.state != MissionState.SEARCHING:
