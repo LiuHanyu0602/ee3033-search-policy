@@ -50,7 +50,7 @@ class SearchManager(Node):
             'robot_frame': 'base_footprint',
             'planner_action': '/compute_path_to_pose',
             'navigate_action': '/navigate_to_pose', 'planner_id': 'GridBased',
-            'navigation_enabled': False, 'weights_path': '',
+            'navigation_enabled': False, 'return_home_enabled': True, 'weights_path': '',
             'candidate_spacing_m': 0.75, 'candidate_clearance_m': 0.20,
             'camera_fov_deg': 70.0, 'camera_range_m': 3.0,
             'headings_per_position': 4, 'free_threshold': 20,
@@ -70,6 +70,7 @@ class SearchManager(Node):
         self.map_frame, self.robot_frame = str(p('map_frame')), str(p('robot_frame'))
         self.planner_id = str(p('planner_id'))
         self.navigation_enabled = bool(p('navigation_enabled'))
+        self.return_home_enabled = bool(p('return_home_enabled'))
         self.spacing, self.clearance = float(p('candidate_spacing_m')), float(p('candidate_clearance_m'))
         self.camera_fov, self.camera_range = float(p('camera_fov_deg')), float(p('camera_range_m'))
         self.heading_count = int(p('headings_per_position'))
@@ -104,6 +105,12 @@ class SearchManager(Node):
         self.plan_cursor = 0
         self.current_pose = self.active_plan = self.active_navigation = None
         self.selected_index = self.observation_deadline = None
+        self.home_pose = None
+        self.return_request = None
+        self.return_pending = False
+        self.return_terminal_verified = True
+        self.return_started = False
+        self.return_failed = False
         self.busy = self.finished = False
 
         latched = QoSProfile(
@@ -114,6 +121,7 @@ class SearchManager(Node):
         self.coverage_pub = self.create_publisher(Float32, '/search/coverage_fraction', latched)
         self.goal_pub = self.create_publisher(PoseStamped, '/search/selected_goal', latched)
         self.complete_pub = self.create_publisher(Bool, '/search/finished', latched)
+        self.return_pub = self.create_publisher(String, '/search/return_status', latched)
         self.create_subscription(OccupancyGrid, self.map_topic, self._map_cb, latched)
         self.create_subscription(String, self.mission_topic, self._mission_cb, latched)
         self.create_service(Trigger, '/search/reset_memory', self._reset)
@@ -129,6 +137,11 @@ class SearchManager(Node):
         msg = String()
         msg.data = value
         self.status_pub.publish(msg)
+
+    def _return_status(self, status):
+        msg = String()
+        msg.data = status
+        self.return_pub.publish(msg)
 
     def _progress(self):
         msg = Float32()
@@ -177,6 +190,12 @@ class SearchManager(Node):
             self.get_logger().info(f'Mission: {previous} -> {self.mission_state}')
         if self.mission_state == 'IDLE':
             self._cancel('mission reset')
+            if self.return_request is not None and not self.return_request.future.done():
+                self.return_request.cancel()
+            self.home_pose = None
+            self.return_pending = self.return_started = self.return_failed = False
+            self.return_terminal_verified = True
+            self._return_status('IDLE')
             if self.memory:
                 self.memory.reset()
             if self.stop_guard.active_request is None:
@@ -185,6 +204,12 @@ class SearchManager(Node):
             self._progress()
         elif self.mission_state != 'SEARCHING':
             self._cancel('mission not searching')
+        elif previous != 'SEARCHING' and self.home_pose is None and not self.stop_guard.stopped:
+            origin = self._robot_pose()
+            if origin is not None:
+                self.home_pose = tuple(origin)
+                self._return_status('HOME_RECORDED')
+                self.get_logger().info(f'Search home recorded: {self.home_pose}')
 
     def _robot_pose(self):
         try:
@@ -206,6 +231,9 @@ class SearchManager(Node):
 
     def _tick(self):
         self._progress()
+        if self.return_pending:
+            self._try_return_home()
+            return
         if self.observation_deadline is not None:
             if time.monotonic() >= self.observation_deadline:
                 self._finish_observation()
@@ -219,6 +247,9 @@ class SearchManager(Node):
         pose = self._robot_pose()
         if pose is None:
             self._status('WAITING_FOR_TF')
+        elif self.home_pose is None:
+            self.home_pose = tuple(pose)
+            self._return_status('HOME_RECORDED')
         elif not self.nav2.planner_is_ready():
             self._status('WAITING_FOR_PLANNER')
         else:
@@ -341,6 +372,16 @@ class SearchManager(Node):
 
     def _nav_done(self, index, future):
         self.active_navigation = None
+        if self.return_pending:
+            try:
+                result = future.result()
+                self.return_terminal_verified = (not result.timed_out and result.accepted is True and
+                    result.status in (4, 5))  # SUCCEEDED or CANCELED
+            except Exception:
+                self.return_terminal_verified = False
+            self.busy = False
+            self._try_return_home()
+            return
         try:
             result = future.result()
             if result.success and not self.stop_guard.stopped:
@@ -379,6 +420,51 @@ class SearchManager(Node):
             self.memory.pause()
         self.observation_deadline, self.busy = None, False
         self._status('TARGET_FOUND')
+        if self.return_home_enabled and self.navigation_enabled:
+            self.return_pending = True
+            self.return_terminal_verified = self.active_navigation is None
+            self._return_status('WAITING_FOR_SEARCH_STOP')
+
+    def _try_return_home(self):
+        if self.return_started or self.return_failed or not self.return_pending:
+            return
+        if self.active_navigation is not None:
+            return  # Nav2 cancellation must finish first
+        if not self.return_terminal_verified:
+            self.return_failed = True
+            self._return_status('FAILED_UNVERIFIED_SEARCH_STOP')
+            return
+        if self.home_pose is None:
+            self.return_failed = True
+            self._return_status('FAILED_NO_HOME_POSE')
+            return
+        if not self.nav2.navigator_is_ready():
+            self._return_status('WAITING_FOR_NAVIGATOR')
+            return
+        home = make_pose(self.map_frame, self.get_clock().now().to_msg(), *self.home_pose)
+        try:
+            self.return_request = self.nav2.navigate_to_pose(home, self.navigation_timeout)
+            self.return_started = True
+            self._return_status('RETURNING')
+            self.return_request.future.add_done_callback(self._return_done)
+        except (RuntimeError, ValueError) as exc:
+            self.return_failed = True
+            self._return_status('FAILED_SUBMISSION')
+            self.get_logger().error(f'Return-home submission failed: {exc}')
+
+    def _return_done(self, future):
+        try:
+            result = future.result()
+            if result.success:
+                self._return_status('SUCCEEDED')
+                self._status('RETURN_HOME_SUCCEEDED')
+            else:
+                self._return_status('FAILED_NAVIGATION')
+                self._status('RETURN_HOME_FAILED')
+        except Exception as exc:
+            self._return_status('FAILED_NAVIGATION')
+            self.get_logger().error(f'Return-home result failed: {exc}')
+        self.return_pending = False
 
     def _finish_search(self, reason):
         self.finished, self.busy = True, False
@@ -387,7 +473,7 @@ class SearchManager(Node):
 
     def _reset(self, request, response):
         del request
-        if self.active_navigation is not None or self.memory is None:
+        if self.active_navigation is not None or self.return_pending or self.memory is None:
             response.success = False
             response.message = 'Navigation active or map unavailable'
             return response
