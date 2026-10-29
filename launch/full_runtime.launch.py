@@ -15,6 +15,8 @@ def generate_launch_description():
     common = LaunchConfiguration('params_file')
     navigation = LaunchConfiguration('navigation_enabled')
     weights = LaunchConfiguration('weights_path')
+    single_goal_mode = LaunchConfiguration('single_goal_mode')
+    max_navigation_goals = LaunchConfiguration('max_navigation_goals')
 
     return LaunchDescription([
         DeclareLaunchArgument('params_file', default_value=params),
@@ -23,6 +25,16 @@ def generate_launch_description():
             'navigation_enabled',
             default_value='false',
             description='Must be explicitly true before SearchManager sends goals',
+        ),
+        DeclareLaunchArgument(
+            'single_goal_mode',
+            default_value='true',
+            description='Stop after the configured number of navigation goal attempts',
+        ),
+        DeclareLaunchArgument(
+            'max_navigation_goals',
+            default_value='1',
+            description='Maximum NavigateToPose dispatches in single-goal mode',
         ),
         Node(
             package='ee3033_search_policy',
@@ -55,6 +67,8 @@ def generate_launch_description():
                 {
                     'weights_path': weights,
                     'navigation_enabled': navigation,
+                    'single_goal_mode': single_goal_mode,
+                    'max_navigation_goals': max_navigation_goals,
                 },
             ],
         ),
