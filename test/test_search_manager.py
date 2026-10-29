@@ -68,11 +68,20 @@ def manager(api):
     node._cancel = Mock()
     node.return_pending = node.finished = node.busy = False
     node.return_request = None
+    node.single_goal_mode = True
+    node.max_navigation_goals = 1
+    node.navigation_goal_count = 0
+    node.operator_cancel_requested = False
+    node.selected_index = None
+    node.observation_deadline = None
+    node.failure_counts = np.zeros(2, dtype=np.int32)
+    node.failure_times = np.full(2, -np.inf)
     node.observation_deadline = None
     node.retry_after = 0.0
     node.mission_state = "SEARCHING"
     node.coverage_target = 0.995
-    node.memory = NS(coverage_fraction=0.1, resume=Mock(), reset=Mock())
+    node.memory = NS(coverage_fraction=0.1, resume=Mock(), pause=Mock(), reset=Mock(),
+                     mark_observation_complete=Mock())
     node.home_pose = (1.5, 2.5, 0.0)
     node.stop_guard = NS(may_dispatch=Mock(return_value=True), stopped=False,
                          active_request=None, reset=Mock())
@@ -80,6 +89,7 @@ def manager(api):
                    navigate_to_pose=Mock())
     node.active_plan = None
     node.path_distances = np.full(2, np.inf)
+    node.candidates = NS(visibility_masks=np.zeros((2, 10, 10), dtype=bool))
     node.plan_cursor = 0
     return node
 
@@ -190,3 +200,71 @@ def test_mission_reset_clears_planner_backoff(manager):
     manager.retry_after = 105.0
     manager._mission_cb(NS(data="IDLE"))
     assert manager.retry_after == 0.0
+
+
+def test_operator_cancel_without_active_goal_latches_stop(manager):
+    response = NS(success=None, message="")
+    result = manager._cancel_navigation(object(), response)
+    assert result.success
+    assert "No active navigation goal" in result.message
+    assert manager.operator_cancel_requested
+    assert manager.finished
+    manager._status.assert_called_once_with("OPERATOR_STOPPED")
+
+
+def test_operator_cancel_requests_active_goal_cancel(manager):
+    request = NS(future=Future(), cancel=Mock())
+    manager.active_navigation = request
+    response = NS(success=None, message="")
+    result = manager._cancel_navigation(object(), response)
+    assert result.success
+    request.cancel.assert_called_once_with()
+    assert manager.operator_cancel_requested
+    assert not manager.finished
+    manager._status.assert_called_once_with("OPERATOR_CANCEL_REQUESTED")
+
+
+def test_operator_cancel_waits_for_verified_terminal_result(manager):
+    manager.operator_cancel_requested = True
+    manager.busy = True
+    future = Future()
+    future.set_result(NS(timed_out=False, accepted=True, status=5))
+    manager._nav_done(0, future)
+    assert manager.finished and not manager.busy
+    manager._status.assert_called_once_with("OPERATOR_STOPPED")
+
+
+def test_operator_cancel_blocks_new_decisions(manager):
+    manager.operator_cancel_requested = True
+    manager._tick()
+    manager._begin_decision.assert_not_called()
+    manager.nav2.navigate_to_pose.assert_not_called()
+
+
+def test_single_goal_mode_finishes_after_successful_observation(manager):
+    manager.navigation_goal_count = 1
+    manager.selected_index = 0
+    manager.observation_deadline = 99.0
+    manager._finish_observation()
+    manager.memory.mark_observation_complete.assert_called_once()
+    assert manager.finished
+    manager._status.assert_called_once_with("SINGLE_GOAL_TEST_COMPLETE")
+
+
+def test_single_goal_mode_stops_after_failed_navigation(manager):
+    manager.navigation_goal_count = 1
+    manager.busy = True
+    future = Future()
+    future.set_result(NS(success=False, error="aborted"))
+    manager._nav_done(0, future)
+    assert manager.finished and not manager.busy
+    assert manager.failure_counts[0] == 1
+    manager._status.assert_called_once_with("SINGLE_GOAL_TEST_FAILED")
+
+
+def test_mission_reset_rearms_single_goal_and_operator_stop(manager):
+    manager.navigation_goal_count = 1
+    manager.operator_cancel_requested = True
+    manager._mission_cb(NS(data="IDLE"))
+    assert manager.navigation_goal_count == 0
+    assert not manager.operator_cancel_requested
