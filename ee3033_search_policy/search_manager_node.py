@@ -51,6 +51,7 @@ class SearchManager(Node):
             'planner_action': '/compute_path_to_pose',
             'navigate_action': '/navigate_to_pose', 'planner_id': 'GridBased',
             'navigation_enabled': False, 'return_home_enabled': True, 'weights_path': '',
+            'single_goal_mode': True, 'max_navigation_goals': 1,
             'candidate_spacing_m': 0.75, 'candidate_clearance_m': 0.20,
             'camera_fov_deg': 70.0, 'camera_range_m': 3.0,
             'headings_per_position': 4, 'free_threshold': 20,
@@ -71,6 +72,10 @@ class SearchManager(Node):
         self.planner_id = str(p('planner_id'))
         self.navigation_enabled = bool(p('navigation_enabled'))
         self.return_home_enabled = bool(p('return_home_enabled'))
+        self.single_goal_mode = bool(p('single_goal_mode'))
+        self.max_navigation_goals = int(p('max_navigation_goals'))
+        if self.max_navigation_goals < 1:
+            raise ValueError('max_navigation_goals must be at least 1')
         self.spacing, self.clearance = float(p('candidate_spacing_m')), float(p('candidate_clearance_m'))
         self.camera_fov, self.camera_range = float(p('camera_fov_deg')), float(p('camera_range_m'))
         self.heading_count = int(p('headings_per_position'))
@@ -113,6 +118,8 @@ class SearchManager(Node):
         self.return_failed = False
         self.busy = self.finished = False
         self.retry_after = 0.0
+        self.navigation_goal_count = 0
+        self.operator_cancel_requested = False
 
         latched = QoSProfile(
             depth=1, reliability=ReliabilityPolicy.RELIABLE,
@@ -128,11 +135,17 @@ class SearchManager(Node):
         self.create_service(Trigger, '/search/reset_memory', self._reset)
         self.create_service(Trigger, '/search/save_memory', self._save)
         self.create_service(Trigger, '/search/load_memory', self._load)
+        self.create_service(Trigger, '/search/cancel_navigation', self._cancel_navigation)
         self.timer = self.create_timer(float(p('decision_period_s')), self._tick)
         self._status('WAITING_FOR_MAP')
         self.get_logger().warning(
             'Navigation is ' + ('ENABLED' if self.navigation_enabled else 'DISABLED')
         )
+        if self.single_goal_mode:
+            self.get_logger().warning(
+                f'SINGLE-GOAL MODE: at most {self.max_navigation_goals} '
+                'navigation goal(s) may be dispatched'
+            )
 
     def _status(self, value):
         msg = String()
@@ -203,10 +216,16 @@ class SearchManager(Node):
                 self.stop_guard.reset()
             self.finished, self.busy = False, False
             self.retry_after = 0.0
+            self.navigation_goal_count = 0
+            self.operator_cancel_requested = False
             self._progress()
         elif self.mission_state != 'SEARCHING':
             self._cancel('mission not searching')
-        elif previous != 'SEARCHING' and self.home_pose is None and not self.stop_guard.stopped:
+        elif previous != 'SEARCHING':
+            self.navigation_goal_count = 0
+            self.operator_cancel_requested = False
+            if self.home_pose is not None or self.stop_guard.stopped:
+                return
             origin = self._robot_pose()
             if origin is not None:
                 self.home_pose = tuple(origin)
@@ -255,7 +274,7 @@ class SearchManager(Node):
                 self._finish_observation()
             return
         if (self.mission_state != 'SEARCHING' or self.finished or self.busy or
-                self.memory is None or not self.stop_guard.may_dispatch() or
+                self.operator_cancel_requested or self.memory is None or not self.stop_guard.may_dispatch() or
                 time.monotonic() < self.retry_after):
             return
         if self.memory.coverage_fraction >= self.coverage_target:
@@ -383,6 +402,10 @@ class SearchManager(Node):
         if not self.stop_guard.may_dispatch():
             self.busy = False
             return
+        if (self.single_goal_mode and
+                self.navigation_goal_count >= self.max_navigation_goals):
+            self._finish_search('SINGLE_GOAL_LIMIT_REACHED')
+            return
         if not self.nav2.navigator_is_ready():
             self.busy = False
             self._status('WAITING_FOR_NAVIGATOR')
@@ -390,6 +413,7 @@ class SearchManager(Node):
         try:
             req = self.nav2.navigate_to_pose(goal, self.navigation_timeout)
             self.active_navigation = req
+            self.navigation_goal_count += 1
             self.stop_guard.track_navigation(req)
             req.future.add_done_callback(lambda future, i=index: self._nav_done(i, future))
             self._status('NAVIGATING')
@@ -399,6 +423,18 @@ class SearchManager(Node):
 
     def _nav_done(self, index, future):
         self.active_navigation = None
+        if self.operator_cancel_requested:
+            try:
+                result = future.result()
+                verified = (not result.timed_out and result.accepted is True and
+                            result.status in (4, 5))
+            except Exception:
+                verified = False
+            self.busy = False
+            self.finished = True
+            self._status('OPERATOR_STOPPED' if verified else 'OPERATOR_STOP_UNVERIFIED')
+            self._progress()
+            return
         if self.return_pending:
             try:
                 result = future.result()
@@ -420,6 +456,9 @@ class SearchManager(Node):
         except Exception as exc:
             self._failure(index, str(exc))
         self.busy, self.selected_index = False, None
+        if (self.single_goal_mode and
+                self.navigation_goal_count >= self.max_navigation_goals):
+            self._finish_search('SINGLE_GOAL_TEST_FAILED')
 
     def _finish_observation(self):
         index = self.selected_index
@@ -428,6 +467,10 @@ class SearchManager(Node):
                 self.mission_state == 'SEARCHING'):
             self.memory.mark_observation_complete(index, self.candidates.visibility_masks[index])
         self.selected_index, self.busy = None, False
+        if (self.single_goal_mode and
+                self.navigation_goal_count >= self.max_navigation_goals):
+            self._finish_search('SINGLE_GOAL_TEST_COMPLETE')
+            return
         self._status('READY')
         self._progress()
 
@@ -480,6 +523,21 @@ class SearchManager(Node):
             self.get_logger().error(f'Return-home submission failed: {exc}')
 
     def _return_done(self, future):
+        if self.operator_cancel_requested:
+            try:
+                result = future.result()
+                verified = (not result.timed_out and result.accepted is True and
+                            result.status in (4, 5))
+            except Exception:
+                verified = False
+            self.return_pending = False
+            self._return_status(
+                'OPERATOR_STOPPED' if verified else 'OPERATOR_STOP_UNVERIFIED'
+            )
+            self._status(
+                'OPERATOR_STOPPED' if verified else 'OPERATOR_STOP_UNVERIFIED'
+            )
+            return
         try:
             result = future.result()
             if result.success:
@@ -498,6 +556,38 @@ class SearchManager(Node):
         self._status(reason)
         self._progress()
 
+    def _cancel_navigation(self, request, response):
+        del request
+        self.operator_cancel_requested = True
+        self.observation_deadline = None
+        if self.memory:
+            self.memory.pause()
+
+        requests = []
+        if self.active_navigation is not None and not self.active_navigation.future.done():
+            requests.append(self.active_navigation)
+        if self.return_request is not None and not self.return_request.future.done():
+            requests.append(self.return_request)
+
+        for active_request in requests:
+            active_request.cancel()
+
+        if requests:
+            self._status('OPERATOR_CANCEL_REQUESTED')
+            response.success = True
+            response.message = (
+                f'Cancellation requested for {len(requests)} active navigation goal(s); '
+                'wait for /search/status terminal confirmation'
+            )
+        else:
+            self.busy = False
+            self.finished = True
+            self._status('OPERATOR_STOPPED')
+            self._progress()
+            response.success = True
+            response.message = 'No active navigation goal; future dispatch is inhibited'
+        return response
+
     def _reset(self, request, response):
         del request
         if self.active_navigation is not None or self.return_pending or self.memory is None:
@@ -509,6 +599,8 @@ class SearchManager(Node):
         self.failure_times.fill(-np.inf)
         self.finished, self.busy = False, False
         self.retry_after = 0.0
+        self.navigation_goal_count = 0
+        self.operator_cancel_requested = False
         if self.stop_guard.active_request is None:
             self.stop_guard.reset()
         self._progress()
