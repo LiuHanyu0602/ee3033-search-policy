@@ -319,7 +319,9 @@ goal dispatch, and requests asynchronous cancellation of an active search or
 return-home goal. A Trigger response confirms request handling only. Require
 `/search/status=OPERATOR_STOPPED` for software terminal confirmation;
 `OPERATOR_STOP_UNVERIFIED` is not proof that the robot stopped. These controls
-do not replace the physical emergency-stop procedure.
+do not replace the physical emergency-stop procedure. Pause/resume must not
+reset the navigation-goal counter. `/search/reset_memory` must refuse to rearm
+while the mission is `SEARCHING` or `PAUSED`.
 
 For the first physical motion test, keep single-goal mode enabled and
 `max_navigation_goals=1`. Do not authorize continuous search until the
