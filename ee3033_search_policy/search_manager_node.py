@@ -222,8 +222,10 @@ class SearchManager(Node):
         elif self.mission_state != 'SEARCHING':
             self._cancel('mission not searching')
         elif previous != 'SEARCHING':
-            self.navigation_goal_count = 0
-            self.operator_cancel_requested = False
+            starting_new_search = previous in ('IDLE', 'WAIT_FOR_TARGET', 'FINISHED')
+            if starting_new_search:
+                self.navigation_goal_count = 0
+                self.operator_cancel_requested = False
             if self.home_pose is not None or self.stop_guard.stopped:
                 return
             origin = self._robot_pose()
@@ -590,6 +592,10 @@ class SearchManager(Node):
 
     def _reset(self, request, response):
         del request
+        if self.mission_state in ('SEARCHING', 'PAUSED'):
+            response.success = False
+            response.message = 'Set mission to IDLE or FINISHED before rearming search'
+            return response
         if self.active_navigation is not None or self.return_pending or self.memory is None:
             response.success = False
             response.message = 'Navigation active or map unavailable'
