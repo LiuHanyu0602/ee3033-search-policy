@@ -88,6 +88,7 @@ def manager(api):
     node.nav2 = NS(planner_is_ready=Mock(return_value=True),
                    navigate_to_pose=Mock())
     node.active_plan = None
+    node.active_navigation = None
     node.path_distances = np.full(2, np.inf)
     node.candidates = NS(visibility_masks=np.zeros((2, 10, 10), dtype=bool))
     node.plan_cursor = 0
@@ -241,19 +242,20 @@ def test_operator_cancel_blocks_new_decisions(manager):
     manager.nav2.navigate_to_pose.assert_not_called()
 
 
-def test_single_goal_mode_finishes_after_successful_observation(manager):
+def test_single_goal_mode_finishes_after_successful_observation(api, manager):
     manager.navigation_goal_count = 1
     manager.selected_index = 0
     manager.observation_deadline = 99.0
-    manager._finish_observation()
+    api.SearchManager._finish_observation(manager)
     manager.memory.mark_observation_complete.assert_called_once()
     assert manager.finished
     manager._status.assert_called_once_with("SINGLE_GOAL_TEST_COMPLETE")
 
 
-def test_single_goal_mode_stops_after_failed_navigation(manager):
+def test_single_goal_mode_stops_after_failed_navigation(api, manager):
     manager.navigation_goal_count = 1
     manager.busy = True
+    manager._failure = api.SearchManager._failure.__get__(manager, api.SearchManager)
     future = Future()
     future.set_result(NS(success=False, error="aborted"))
     manager._nav_done(0, future)
