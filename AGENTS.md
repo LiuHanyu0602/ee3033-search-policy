@@ -299,3 +299,29 @@ Label results explicitly as **offline simulation**, **unit test**, **non-actuati
 - Never proceed to the next phase without evidence and a phase commit.
 - Prefer reversible changes, minimal diffs, and clear rollback instructions that preserve user data.
 - Do not merge to `main` or start motion on your own initiative.
+
+
+## Current physical-validation hardening interface
+
+The consolidated default branch is `main` at merge commit `497c66c`. New
+physical-validation safety changes are developed on
+`robot-validation-hardening`; do not infer that they are present on `main`
+until a reviewed merge occurs.
+
+The hardening branch adds these SearchManager parameters:
+
+- `single_goal_mode` (default `true`)
+- `max_navigation_goals` (default `1`, minimum `1`)
+
+It also adds `/search/cancel_navigation` using
+`std_srvs/srv/Trigger`. Calling it latches an operator stop, inhibits future
+goal dispatch, and requests asynchronous cancellation of an active search or
+return-home goal. A Trigger response confirms request handling only. Require
+`/search/status=OPERATOR_STOPPED` for software terminal confirmation;
+`OPERATOR_STOP_UNVERIFIED` is not proof that the robot stopped. These controls
+do not replace the physical emergency-stop procedure.
+
+For the first physical motion test, keep single-goal mode enabled and
+`max_navigation_goals=1`. Do not authorize continuous search until the
+single-goal terminal state, physical stop, Nav2 result, and operator cancel path
+have all been observed on the robot.
