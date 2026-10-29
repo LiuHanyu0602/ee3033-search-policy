@@ -74,6 +74,12 @@ search_manager:
 
     # Remains false unless launch argument navigation_enabled:=true is given.
     navigation_enabled: false
+
+    # Physical validation safety gate. The default permits at most one
+    # NavigateToPose dispatch per SEARCHING mission.
+    single_goal_mode: true
+    max_navigation_goals: 1
+
     return_home_enabled: true
     weights_path: ''
 
