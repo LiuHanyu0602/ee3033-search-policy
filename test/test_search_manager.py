@@ -268,3 +268,22 @@ def test_mission_reset_rearms_single_goal_and_operator_stop(manager):
     manager._mission_cb(NS(data="IDLE"))
     assert manager.navigation_goal_count == 0
     assert not manager.operator_cancel_requested
+
+
+def test_pause_resume_does_not_rearm_single_goal(manager):
+    manager.mission_state = "PAUSED"
+    manager.navigation_goal_count = 1
+    manager.operator_cancel_requested = True
+    manager._mission_cb(NS(data="SEARCHING"))
+    assert manager.navigation_goal_count == 1
+    assert manager.operator_cancel_requested
+
+
+@pytest.mark.parametrize("state", ["SEARCHING", "PAUSED"])
+def test_memory_reset_cannot_rearm_active_mission(manager, state):
+    manager.mission_state = state
+    response = NS(success=None, message="")
+    result = manager._reset(object(), response)
+    assert not result.success
+    assert "IDLE or FINISHED" in result.message
+    manager.memory.reset.assert_not_called()
