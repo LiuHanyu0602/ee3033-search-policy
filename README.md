@@ -560,6 +560,7 @@ A successful service response means that cancellation was requested, not that
 the robot has already stopped. Monitor the transient-local `/search/status`
 topic for `OPERATOR_STOPPED`. Treat `OPERATOR_STOP_UNVERIFIED` as a failed
 stop verification and use the separately verified hardware emergency-stop
-procedure. Resetting the mission to `IDLE`, or calling
-`/search/reset_memory` while stationary with no active navigation, rearms the
-software gate.
+procedure. `/search/reset_memory` refuses to rearm while the mission is `SEARCHING` or
+`PAUSED`. First reset or finish the mission, verify that no navigation is
+active, and then reset memory. Pause/resume preserves the current navigation
+goal count.
