@@ -1,7 +1,16 @@
 # Python caches and environments
 __pycache__/
 *.py[cod]
-.pytest_cache/
+cd /home/ros2_ws/src/ee3033-search-policy
+pwd
+git status --short --branch
+git log -1 --format='%H %s'
+
+printf '\n===== ROS ENVIRONMENT =====\n'
+printenv | grep -E '^(ROS_DISTRO|ROS_DOMAIN_ID|RMW_IMPLEMENTATION|ROS_LOCALHOST_ONLY)=' || true
+
+printf '\n===== RUNNING NODES =====\n'
+ros2 node list.pytest_cache/
 .venv/
 venv/
 
