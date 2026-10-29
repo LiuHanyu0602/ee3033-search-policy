@@ -22,7 +22,7 @@ from tf2_ros import Buffer, TransformException, TransformListener
 
 from .coverage_memory import CoverageMemory
 from .feature_builder import build_candidate_features, make_shortlist, turn_angles
-from .map_utils import GridGeometry, occupancy_array
+from .map_utils import GridGeometry, occupancy_array, world_to_grid
 from .model import TinySearchPolicy
 from .nav2_client import Nav2Client
 from .policy_decision import select_with_fallback
@@ -112,6 +112,7 @@ class SearchManager(Node):
         self.return_started = False
         self.return_failed = False
         self.busy = self.finished = False
+        self.retry_after = 0.0
 
         latched = QoSProfile(
             depth=1, reliability=ReliabilityPolicy.RELIABLE,
@@ -201,6 +202,7 @@ class SearchManager(Node):
             if self.stop_guard.active_request is None:
                 self.stop_guard.reset()
             self.finished, self.busy = False, False
+            self.retry_after = 0.0
             self._progress()
         elif self.mission_state != 'SEARCHING':
             self._cancel('mission not searching')
@@ -212,17 +214,31 @@ class SearchManager(Node):
                 self.get_logger().info(f'Search home recorded: {self.home_pose}')
 
     def _robot_pose(self):
+        if self.geometry is None:
+            self._status('WAITING_FOR_MAP')
+            return None
         try:
             tf = self.tf_buffer.lookup_transform(
                 self.map_frame, self.robot_frame, Time(),
                 timeout=Duration(seconds=0.1),
             )
         except TransformException as exc:
+            self._status('WAITING_FOR_TF')
             self.get_logger().warning(f'TF unavailable: {exc}', throttle_duration_sec=2.0)
             return None
         q = tf.transform.rotation
         yaw = math.atan2(2 * (q.w*q.z + q.x*q.y), 1 - 2 * (q.y*q.y + q.z*q.z))
         t = tf.transform.translation
+        try:
+            world_to_grid(t.x, t.y, self.geometry)
+        except ValueError as exc:
+            self._status('ROBOT_POSE_OUTSIDE_MAP')
+            self.get_logger().error(
+                f'Robot TF position is invalid for the occupancy map: {exc}; '
+                'set a valid localization pose before planning',
+                throttle_duration_sec=2.0,
+            )
+            return None
         return float(t.x), float(t.y), float(yaw)
 
     def _blocked(self):
@@ -239,14 +255,15 @@ class SearchManager(Node):
                 self._finish_observation()
             return
         if (self.mission_state != 'SEARCHING' or self.finished or self.busy or
-                self.memory is None or not self.stop_guard.may_dispatch()):
+                self.memory is None or not self.stop_guard.may_dispatch() or
+                time.monotonic() < self.retry_after):
             return
         if self.memory.coverage_fraction >= self.coverage_target:
             self._finish_search('COVERAGE_TARGET_REACHED')
             return
         pose = self._robot_pose()
         if pose is None:
-            self._status('WAITING_FOR_TF')
+            return
         elif self.home_pose is None:
             self.home_pose = tuple(pose)
             self._return_status('HOME_RECORDED')
@@ -302,6 +319,16 @@ class SearchManager(Node):
             result = future.result()
             if result.success:
                 self.path_distances[index] = result.path_length_m
+            elif result.accepted is False:
+                self.busy = False
+                self.retry_after = time.monotonic() + 5.0
+                self._status('WAITING_FOR_PLANNER_ACTIVE')
+                self.get_logger().error(
+                    'Nav2 planner rejected the request; verify planner_server '
+                    'lifecycle readiness before search',
+                    throttle_duration_sec=2.0,
+                )
+                return
             else:
                 self._failure(index, result.error)
         except Exception as exc:
@@ -481,6 +508,7 @@ class SearchManager(Node):
         self.failure_counts.fill(0)
         self.failure_times.fill(-np.inf)
         self.finished, self.busy = False, False
+        self.retry_after = 0.0
         if self.stop_guard.active_request is None:
             self.stop_guard.reset()
         self._progress()

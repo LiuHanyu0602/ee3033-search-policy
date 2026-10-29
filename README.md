@@ -393,10 +393,28 @@ Integration with the runtime MLP search controller is still required before auto
 
 ## Full ROS 2 runtime interface (development branch)
 
-The `full-runtime-integration` branch contains the complete software-facing
-Stage-2 loop. It is intentionally safe by default: the search manager publishes
+The `robot-runtime-integration` branch builds on the return-to-origin and
+target-localization development line, which includes the software-facing
+Stage-2 loop. It is intentionally non-actuating by default: the search manager publishes
 its selected goal but cannot send NavigateToPose unless
 `navigation_enabled:=true` and `/mission/state` is `SEARCHING`.
+
+The motion gate is named `navigation_enabled`; `enable_motion` is not a
+supported parameter alias. Keep navigation disabled until live deployment
+checks and explicit on-site authorization are complete.
+
+Before recording the search home or planning, the robot TF position must be
+finite and inside the occupancy map, including its translated/rotated origin.
+Otherwise `/search/status` reports `ROBOT_POSE_OUTSIDE_MAP` and logs the
+localization error. Missing map, TF, or planner readiness also blocks planning.
+A rejected planning goal stops that candidate batch, reports
+`WAITING_FOR_PLANNER_ACTIVE`, and waits five seconds before retrying. Rejection
+does not blacklist a candidate or prove the planner is inactive; inspect its
+actual lifecycle state. Return-home handling and observation completion are
+not delayed by this planner backoff.
+
+Offline regression tests use ROS doubles and do not establish TF freshness,
+localization health, planner lifecycle readiness, or physical navigation safety.
 
 ### Runtime data flow
 

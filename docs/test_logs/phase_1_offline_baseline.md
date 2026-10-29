@@ -95,3 +95,42 @@ started or changed. Live map, TF, localization, planner, sensors, ROS Humble
 build, and physical safety checks remain pending. The historical robot audit's
 empty map YAML is unresolved by these offline results; verify its current
 state before robot-side planning.
+
+## 2026-10-29: offline readiness-safeguard integration
+
+- Classification: offline unit tests and static checks; no live ROS or motion.
+- Branch: `robot-runtime-integration`.
+- Parent checkpoint: `e95e72a` (guidance and baseline records).
+- Source intent: divergent readiness fix `81df4d9`, adapted rather than merged
+  wholesale into the return-to-origin implementation.
+- Map bounds validation reuses `world_to_grid` in `_robot_pose`, protecting both
+  planning and mission-start home capture. Existing TF/planner wait states and
+  rotated-map geometry are preserved.
+- Planner goal rejection stops the batch without blacklisting candidates and
+  delays decision retry for five monotonic seconds. Return-home handling and
+  observation completion retain priority. Mission/memory reset clears backoff.
+- Guidance now names the existing `navigation_enabled` motion gate rather than
+  an unsupported `enable_motion` alias. Motion defaults were not changed.
+
+Using the same approved isolated development environment:
+
+```bash
+"$PYTHON" -m pytest test -q
+git diff --check
+```
+
+Observed results:
+
+- **86 passed in 0.29 s**, including 17 new readiness regression cases.
+- Covered map boundaries, non-finite position, rotated origin, invalid home
+  capture, missing map/TF/planner, exact five-second retry boundary, rejected
+  versus accepted planning outcomes, return/observation priority, and mission
+  reset.
+- AST syntax checks: PASS for 25 package, launch, test, and setup Python files.
+- Whitespace checks: PASS.
+
+No robot-side dependencies were installed and no launch or motion command was
+run. TF freshness, actual planner lifecycle, ROS build, and on-robot acceptance
+remain pending. After reviewing these results, the operator approved the
+offline runtime checkpoint and its local commit. This does not authorize
+robot motion or establish live integration acceptance.

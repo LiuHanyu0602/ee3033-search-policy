@@ -37,7 +37,7 @@ The records under `docs/test_logs/` describe their stated dates and revisions. H
 
 1. Never execute `rm -rf`, `git reset --hard`, or commands that overwrite or discard user modifications.
 2. Do not directly modify instructor-provided core packages for the base controller, Nav2, SLAM, LiDAR, or YOLO. Put new functionality in `ee3033_search_policy` whenever possible.
-3. All motion capabilities must be disabled by default: `enable_motion: false`.
+3. All motion capabilities must be disabled by default. The current launch/node gate is `navigation_enabled: false`; `enable_motion` is not a supported alias. Keep `Nav2Client` navigation disabled in non-actuating tools.
 4. Do not send `NavigateToPose` without explicit, contemporaneous approval from personnel physically present with the robot.
 5. The search-policy node must never publish directly to `/cmd_vel`.
 6. Before the first physical navigation, verify the emergency-stop method; permit only one short-distance goal, not an automatic loop.
@@ -162,7 +162,7 @@ Dry-run must never create/use a navigation goal client or publish `/cmd_vel`. Pu
 
 ### 6.7 Navigation, blacklist, YOLO, localization, mission
 
-Navigation is a later, opt-in phase only: default `enable_motion=false`, one short first goal, explicit operator confirmation and emergency-stop check. Handle accepted/rejected goals, feedback, success, abort, cancel, timeout, and terminal state. Record blacklist entries (`candidate_id`, failure count/time, Nav2 status, expiry); support reset/save/load.
+Navigation is a later, opt-in phase only: default `navigation_enabled=false`, one short first goal, explicit operator confirmation and emergency-stop check. Handle accepted/rejected goals, feedback, success, abort, cancel, timeout, and terminal state. Record blacklist entries (`candidate_id`, failure count/time, Nav2 status, expiry); support reset/save/load.
 
 Inspect real YOLO topics, types, timestamps, and message payloads before writing an adapter. Normalize class name/id, confidence, bbox center/size, timestamp, and tracking ID if available. Require configurable target class, threshold, multi-frame confirmation, freshness checks, and false-positive handling.
 
