@@ -1,0 +1,12 @@
+planner_test:
+  ros__parameters:
+    map_topic: /map
+    planner_action: /compute_path_to_pose
+    planner_id: GridBased
+    # Test-point filtering only; configure for the actual robot and map.
+    clearance_m: 0.20
+    min_separation_m: 1.0
+    free_threshold: 20
+    occupied_threshold: 65
+    readiness_timeout_s: 30.0
+    request_timeout_s: 15.0

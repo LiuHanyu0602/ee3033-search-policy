@@ -1,0 +1,104 @@
+search_policy_dry_run:
+  ros__parameters:
+    map_topic: /map
+    map_frame: map
+    robot_frame: base_footprint
+    navigate_action: /navigate_to_pose
+    status_period_s: 2.0
+
+target_checker:
+  ros__parameters:
+    status_topic: /detector/status
+    target_info_topic: /detector/target_info
+    target_found_topic: /target_found
+    similarity_threshold: 0.85
+    required_frames: 3
+    max_frame_gap_s: 1.0
+    status_timeout_s: 1.0
+    publish_period_s: 0.2
+
+target_localizer:
+  ros__parameters:
+    map_frame: map
+    base_frame: base_footprint
+    camera_info_topic: /camera_info
+    scan_topic: /scan
+    status_topic: /detector/status
+    target_info_topic: /detector/target_info
+    target_found_topic: /target_found
+    position_topic: /target_position
+    range_mode: lidar_then_ground
+    laser_yaw_offset_rad: 0.0
+    camera_yaw_offset_rad: 0.0
+    camera_height_m: 0.2655
+    camera_pitch_down_rad: 0.0
+    scan_window_rad: 0.05236
+    scan_timeout_s: 0.5
+    minimum_range_m: 0.15
+    maximum_range_m: 4.0
+    minimum_ground_angle_rad: 0.0873
+
+    # Target Localization V2
+    # Keep IMU correction disabled until the physical topic, frame,
+    # pitch sign, and zero offset have been measured.
+    imu_topic: /imu
+    use_imu_pitch: false
+    imu_pitch_sign: 1.0
+    imu_pitch_offset_rad: 0.0
+    imu_timeout_s: 0.25
+
+    # Reject noisy scan points and likely wall returns behind short targets.
+    minimum_lidar_points: 2
+    lidar_ground_gate_m: 0.35
+
+    # Multi-view bearing triangulation and robust coordinate fusion.
+    max_observations: 30
+    minimum_multiview_observations: 3
+    minimum_baseline_m: 0.25
+    ransac_threshold_m: 0.20
+    fusion_gate_m: 0.35
+
+mission_manager:
+  ros__parameters: {}
+
+search_manager:
+  ros__parameters:
+    map_topic: /map
+    mission_state_topic: /mission/state
+    target_found_topic: /target_found
+    map_frame: map
+    robot_frame: base_footprint
+    planner_action: /compute_path_to_pose
+    navigate_action: /navigate_to_pose
+    planner_id: GridBased
+
+    # Remains false unless launch argument navigation_enabled:=true is given.
+    navigation_enabled: false
+    return_home_enabled: true
+    weights_path: ''
+
+    # Must later be calibrated against the physical robot and camera.
+    candidate_spacing_m: 0.75
+    candidate_clearance_m: 0.20
+    camera_fov_deg: 70.0
+    camera_range_m: 3.0
+    headings_per_position: 4
+    free_threshold: 20
+    occupied_threshold: 65
+
+    # Keep these consistent with the offline expert-data generator.
+    shortlist_size: 32
+    planning_candidates: 16
+    linear_speed_mps: 0.25
+    angular_speed_rps: 0.8
+    observation_time_s: 0.25
+    time_discount_s: 20.0
+
+    planning_timeout_s: 8.0
+    navigation_timeout_s: 120.0
+    decision_period_s: 0.5
+    coverage_target: 0.995
+    minimum_gain_m2: 0.01
+    max_candidate_failures: 2
+    failure_cooldown_s: 60.0
+    memory_path: /tmp/ee3033_search_memory.npz

@@ -1,6 +1,7 @@
 # Python caches and environments
 __pycache__/
 *.py[cod]
+.pytest_cache/
 .venv/
 venv/
 
@@ -30,3 +31,7 @@ metadata.yaml
 *.tmp
 *.bak
 *~
+
+# Native crash dumps
+core
+core.*
