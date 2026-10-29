@@ -521,3 +521,45 @@ After a confirmed target, the search manager cancels its active Nav2 search goal
 
 **Before running any ROS 2 commands on the Raspberry Pi**, initialize the environment:
 `source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash`
+
+
+## Physical validation safety controls
+
+The runtime defaults to non-actuating operation. When physical navigation is
+explicitly enabled, the validation defaults also limit each SEARCHING mission
+to one navigation goal attempt:
+
+```yaml
+navigation_enabled: false
+single_goal_mode: true
+max_navigation_goals: 1
+```
+
+Launch arguments expose the same controls:
+
+```bash
+ros2 launch ee3033_search_policy full_runtime.launch.py \
+  navigation_enabled:=true \
+  single_goal_mode:=true \
+  max_navigation_goals:=1
+```
+
+In single-goal mode, a successful navigation and completed observation reports
+`SINGLE_GOAL_TEST_COMPLETE`. A failed navigation reports
+`SINGLE_GOAL_TEST_FAILED`. The node will not automatically dispatch another
+goal in either case.
+
+An operator can inhibit all later dispatches and request cancellation of an
+active search or return-home goal with:
+
+```bash
+ros2 service call /search/cancel_navigation std_srvs/srv/Trigger "{}"
+```
+
+A successful service response means that cancellation was requested, not that
+the robot has already stopped. Monitor the transient-local `/search/status`
+topic for `OPERATOR_STOPPED`. Treat `OPERATOR_STOP_UNVERIFIED` as a failed
+stop verification and use the separately verified hardware emergency-stop
+procedure. Resetting the mission to `IDLE`, or calling
+`/search/reset_memory` while stationary with no active navigation, rearms the
+software gate.
