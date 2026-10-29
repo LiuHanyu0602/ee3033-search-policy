@@ -518,3 +518,6 @@ After a confirmed target, the search manager cancels its active Nav2 search goal
 `/search/return_status` (`std_msgs/msg/String`, reliable/transient-local) reports `HOME_RECORDED`, `WAITING_FOR_SEARCH_STOP`, `WAITING_FOR_NAVIGATOR`, `RETURNING`, `SUCCEEDED`, or `FAILED_*`. Mission states include `TARGET_FOUND -> RETURNING_HOME -> FINISHED` and `RETURN_FAILED`. The saved home pose is the **search starting pose**, not the target coordinate or an origin hardcoded to (0,0). The default `navigation_enabled:=false` remains safe: no drive or return is sent unless explicitly enabled. `return_home_enabled:=false` disables automatic return.
 
 **Robot acceptance is still required:** verify stable TF, Nav2 lifecycle and goal cancellation, real physical stop, correct saved start pose, map consistency and actual return accuracy. Nav2 Action results alone do not prove physical standstill. Do not enable live navigation without an on-site operator and safe test area.
+
+**Before running any ROS 2 commands on the Raspberry Pi**, initialize the environment:
+`source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash`
