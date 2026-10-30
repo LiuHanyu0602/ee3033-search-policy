@@ -456,18 +456,19 @@ target object and little background. Do not use the entire camera frame: the
 detector would learn the background together with the object.
 
 One reproducible method is to crop a camera screenshot on a laptop and copy it
-to the bind-mounted repository. From the laptop/Ubuntu computer:
+to the bind-mounted repository. From the laptop/Ubuntu computer, create the
+robot-side directory first and then copy the crop:
 
 ```bash
+ssh balance@<ROBOT_IP> \
+  'mkdir -p /home/balance/ros2_ws/src/ee3033-search-policy/target_samples'
+
 scp bottle_target.jpg \
   balance@<ROBOT_IP>:/home/balance/ros2_ws/src/ee3033-search-policy/target_samples/bottle_target.jpg
 ```
 
-Create the destination once on the Raspberry Pi host before that copy:
-
-```bash
-mkdir -p /home/balance/ros2_ws/src/ee3033-search-policy/target_samples
-```
+Replace `<ROBOT_IP>` with the current address, for example
+`10.75.60.142` on the active hotspot session.
 
 The same file is then visible inside Docker at:
 
