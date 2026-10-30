@@ -335,60 +335,274 @@ safe points, inspect the map and configured clearance/separation rather than
 treating unknown cells as free. The test does not silently reduce clearance,
 change planner IDs, or retry different goals.
 
-## Target Detection and Stop Integration
+## Raspberry Pi camera and real target-detection workflow
 
-### Overview
+This section documents the interfaces measured on the Balance Raspberry Pi.
+The detector is **reference-image based**: to search for a bottle, provide a
+tight crop of that bottle through `/detector/set_target`. There is no
+`target_class=bottle` command in this stack, and this repository does not
+consume a `/yolo/detections` JSON topic.
 
-The target detection and stop integration modules connect the Raspberry Pi's YOLOv8n-320 NCNN detector to the autonomous search controller.
-
-The detection logic is implemented separately from the MLP waypoint-selection algorithm.
-
-### ROS 2 Interfaces
-
-| Topic | Message Type | Purpose |
-|---|---|---|
-| `/yolo/detections` | `std_msgs/msg/String` | JSON detection results published by the YOLO NCNN node |
-| `/target_found` | `std_msgs/msg/Bool` | Confirmed target-detection status |
-
-### Target Checker
-
-`target_checker.py` subscribes to `/yolo/detections` and validates incoming detections.
-
-Default configuration:
-
-- Target class: `bottle`
-- Minimum detection confidence: `0.70`
-- Required consecutive detection frames: `3`
-- Output frequency: `5 Hz`
-
-The checker verifies distinct frame timestamps to avoid counting duplicate images.
-
-Once the target is confirmed, `/target_found` remains `True` until the node is restarted.
-
-Run the checker after building and sourcing the ROS 2 workspace:
+All commands below run inside the robot ROS Docker container unless explicitly
+labelled otherwise. On the Raspberry Pi host, enter the existing container with:
 
 ```bash
-ros2 run ee3033_search_policy target_checker
+docker exec -it ros2_humble bash
 ```
 
-### Stop Integration
+In every new Docker terminal:
 
-`target_stop_guard.py` provides stop-handling logic for the autonomous search controller.
+```bash
+source /opt/ros/humble/setup.bash
+source /home/ros2_ws/install/setup.bash
+```
 
-When `/target_found=True` is received, the search controller should:
+Do not launch the camera or detector twice. Before starting either component,
+check for existing instances:
 
-1. Stop issuing new search waypoints.
-2. Request cancellation of the active Nav2 `NavigateToPose` goal.
-3. Check the final navigation action result.
-4. Verify that the robot has stopped moving.
+```bash
+ros2 node list | grep -E '^/usb_cam$|^/object_detector_node$' || true
+pgrep -af 'usb_cam|balance_object_detect|object_detector' || true
+```
 
-The stop guard must be integrated into the same controller that owns the active Nav2 navigation request. It is not a standalone executable.
+If one is already running, reuse it. If duplicate nodes exist, stop the extra
+launch from the terminal that owns it with Ctrl+C; do not start another copy.
 
-### Current Integration Status
+### 1. Start the USB camera
 
-The Target Checker implementation is available, but end-to-end detection and physical stopping have not yet been validated.
+Open Docker terminal A:
 
-Integration with the runtime MLP search controller is still required before autonomous stop behavior can be confirmed.
+```bash
+source /opt/ros/humble/setup.bash
+source /home/ros2_ws/install/setup.bash
+
+ros2 launch balance_usb_cam usb_cam.launch.py mode:=detector
+```
+
+Keep this terminal running. The measured detector-mode interfaces are:
+
+| Name | Type |
+| --- | --- |
+| `/image_raw` | `sensor_msgs/msg/Image` |
+| `/image_raw/compressed` | `sensor_msgs/msg/CompressedImage` |
+| `/camera_info` | `sensor_msgs/msg/CameraInfo` |
+
+Verify them from Docker terminal B:
+
+```bash
+source /opt/ros/humble/setup.bash
+source /home/ros2_ws/install/setup.bash
+
+ros2 node list | grep -x /usb_cam
+ros2 topic info /image_raw/compressed --verbose
+ros2 topic info /camera_info --verbose
+timeout 8 ros2 topic hz /image_raw
+timeout 5 ros2 topic echo /camera_info --once
+```
+
+Expected: one `/usb_cam` node, one image publisher, approximately 10 Hz in
+the measured detector configuration, and a valid `CameraInfo` message.
+A timeout is used so diagnostic commands do not block indefinitely.
+
+### 2. Start the Balance object detector
+
+Open Docker terminal C:
+
+```bash
+source /opt/ros/humble/setup.bash
+source /home/ros2_ws/install/setup.bash
+
+ros2 launch balance_object_detect balance_object_detector.launch.py \
+  rqt_view:=False
+```
+
+The launch defaults currently select `yolo26n.pt`,
+`osnet_x0_25`, and `mobilenet_v3_small`. Keep the detector terminal
+running. Verify that exactly one detector is connected to the camera:
+
+```bash
+ros2 node list | grep -x /object_detector_node
+ros2 node info /object_detector_node
+ros2 topic info /image_raw/compressed --verbose
+ros2 service list -t | grep '^/detector/'
+ros2 topic list -t | grep '^/detector/'
+```
+
+The real detector interfaces are:
+
+| Interface | Type | Purpose |
+| --- | --- | --- |
+| `/detector/set_target` | `balance_interface/srv/SetTarget` | Supply a cropped target reference image |
+| `/detector/reset_target` | `std_srvs/srv/Empty` | Clear the detector target |
+| `/detector/status` | `std_msgs/msg/String` | `IDLE`, `SEARCHING`, `TRACKING`, etc. |
+| `/detector/target_info` | `balance_interface/msg/TargetInfo` | Detection flag, bbox and cosine similarity |
+| `/detector/result_image/compressed` | `sensor_msgs/msg/CompressedImage` | Annotated debug image |
+| `/detector/click_point` | `geometry_msgs/msg/Point` | Detector GUI support; not required by this CLI workflow |
+
+Confirm the installed definitions rather than assuming them:
+
+```bash
+ros2 interface show balance_interface/srv/SetTarget
+ros2 interface show balance_interface/msg/TargetInfo
+```
+
+Before a target is set, the expected detector status is `IDLE`.
+
+### 3. Prepare a target reference image
+
+The official CLI client expects an image file that is accessible **inside the
+Docker container**. Use a close, sharp, tightly cropped image containing the
+target object and little background. Do not use the entire camera frame: the
+detector would learn the background together with the object.
+
+One reproducible method is to crop a camera screenshot on a laptop and copy it
+to the bind-mounted repository. From the laptop/Ubuntu computer:
+
+```bash
+scp bottle_target.jpg \
+  balance@<ROBOT_IP>:/home/balance/ros2_ws/src/ee3033-search-policy/target_samples/bottle_target.jpg
+```
+
+Create the destination once on the Raspberry Pi host before that copy:
+
+```bash
+mkdir -p /home/balance/ros2_ws/src/ee3033-search-policy/target_samples
+```
+
+The same file is then visible inside Docker at:
+
+```text
+/home/ros2_ws/src/ee3033-search-policy/target_samples/bottle_target.jpg
+```
+
+Check it inside Docker:
+
+```bash
+ls -lh /home/ros2_ws/src/ee3033-search-policy/target_samples/bottle_target.jpg
+```
+
+Target reference photographs are experiment inputs and should not be committed
+unless the team deliberately wants them in Git.
+
+### 4. Set the target (for example, a bottle)
+
+With the camera and detector still running:
+
+```bash
+ros2 run balance_object_detect test_object_detect_client \
+  /home/ros2_ws/src/ee3033-search-policy/target_samples/bottle_target.jpg
+```
+
+Expected response includes `SUCCESS`. The detector status should change from
+`IDLE` to `SEARCHING`, and to `TRACKING` when the live camera matches the
+reference target.
+
+Monitor status without an endless command:
+
+```bash
+timeout 10 ros2 topic echo /detector/status
+```
+
+Monitor the real detection payload using its measured BEST_EFFORT QoS:
+
+```bash
+timeout 10 ros2 topic echo /detector/target_info \
+  --qos-reliability best_effort
+```
+
+A useful matched message has `detected: true`, positive bbox width/height,
+and a finite similarity. A stream of `detected: false` while status is
+`SEARCHING` means the pipeline is running but the live image has not matched
+the reference strongly enough.
+
+### 5. Start this repository's target confirmation and localization
+
+The unified launch starts `target_checker`, `target_localizer`,
+`mission_manager`, and `search_manager`. Its safe default does not send
+navigation goals:
+
+```bash
+ros2 launch ee3033_search_policy full_runtime.launch.py \
+  navigation_enabled:=false \
+  single_goal_mode:=true \
+  max_navigation_goals:=1
+```
+
+The real checker consumes:
+
+| Input | Type |
+| --- | --- |
+| `/detector/status` | `std_msgs/msg/String` |
+| `/detector/target_info` | `balance_interface/msg/TargetInfo` |
+
+Default confirmation requires status `TRACKING`, `detected=true`,
+similarity at least `0.85`, a positive bbox, and three consecutive valid
+frames. It then latches `/target_found=true`.
+
+Inspect the complete chain:
+
+```bash
+ros2 node info /target_checker
+
+timeout 10 ros2 topic echo /target_found --once \
+  --qos-reliability reliable \
+  --qos-durability transient_local
+
+timeout 10 ros2 topic echo /target_position_candidate
+timeout 10 ros2 topic echo /target_position --once \
+  --qos-reliability reliable \
+  --qos-durability transient_local
+```
+
+`/target_position` also requires valid `/camera_info`, `/scan`, TF, and
+the target-localizer calibration parameters. A confirmed visual detection does
+not by itself prove that the reported map coordinate is accurate.
+
+### 6. Reset or change the target
+
+First clear the detector's current reference:
+
+```bash
+ros2 service call /detector/reset_target std_srvs/srv/Empty "{}"
+```
+
+Then clear this repository's latched confirmation:
+
+```bash
+ros2 service call /target_checker/reset std_srvs/srv/Trigger "{}"
+```
+
+Confirm the reset:
+
+```bash
+timeout 5 ros2 topic echo /detector/status --once
+
+timeout 5 ros2 topic echo /target_found --once \
+  --qos-reliability reliable \
+  --qos-durability transient_local
+```
+
+Expected: detector status `IDLE` and `/target_found.data=false`. To search
+for a different object, run `test_object_detect_client` again with its new
+tight crop.
+
+### 7. Common failure checks
+
+| Symptom | Check |
+| --- | --- |
+| Detector remains `IDLE` | The `SetTarget` call did not succeed or its file path is not visible inside Docker |
+| No image subscriber | Start one camera and one detector; inspect `/image_raw/compressed --verbose` |
+| Two detector publishers/subscribers | Duplicate detector launches; stop the extra launch with Ctrl+C |
+| `SEARCHING` with `detected=false` | Poor/incorrect reference crop, target not visible, scale/viewpoint mismatch or insufficient similarity |
+| Detector says `TRACKING` but `/target_found=false` | Check similarity, bbox size, three-frame continuity, status freshness, and that `target_checker` is running |
+| `/target_found=true` but no coordinate | Check `/camera_info`, `/scan`, `map -> base_footprint`, camera extrinsics and localizer logs |
+| Camera launch prints display/xhost errors | Keep `rqt_view:=False`; visualization should run on a computer with a valid display |
+| Diagnostic command appears stuck | Use the documented `timeout` wrapper; topic echo/hz normally waits for messages |
+
+When `/target_found=true` arrives during an enabled search, SearchManager
+inhibits later goal dispatch and requests cancellation of its owned Nav2 goal.
+A cancellation request is not proof of physical standstill; verify the final
+Action result and robot motion before declaring a successful stop.
 
 
 ## Full ROS 2 runtime interface (development branch)
