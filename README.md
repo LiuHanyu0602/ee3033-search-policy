@@ -335,13 +335,55 @@ safe points, inspect the map and configured clearance/separation rather than
 treating unknown cells as free. The test does not silently reduce clearance,
 change planner IDs, or retry different goals.
 
-## Raspberry Pi camera and real target-detection workflow
+## Camera and detector integration status
 
-This section documents the interfaces measured on the Balance Raspberry Pi.
-The detector is **reference-image based**: to search for a bottle, provide a
-tight crop of that bottle through `/detector/set_target`. There is no
-`target_class=bottle` command in this stack, and this repository does not
-consume a `/yolo/detections` JSON topic.
+The final project requirement is **automatic YOLO category detection of a
+`bottle`**. It must not require an operator click or a reference crop.
+
+The currently installed `balance_object_detect` node implements a different
+task: reference-image/instance matching. It remains `IDLE` until a target
+image or click is supplied, and its public `TargetInfo.similarity` value is
+appearance similarity, not YOLO class confidence. The current
+`target_checker` consumes that legacy interface. Therefore the installed
+reference detector cannot be converted into automatic bottle-class detection
+by a launch argument or service command.
+
+The final required path is:
+
+```text
+live camera
+  -> YOLO class detections
+  -> filter class=bottle and confidence threshold
+  -> fresh multi-frame confirmation
+  -> /target_found
+  -> bbox-based target localization
+  -> navigation cancellation and verified stop
+```
+
+At this revision, the repository has **no adapter for a generic YOLO detection
+message**, so the final bottle workflow is not yet implemented. Before writing
+that adapter, inspect the actual YOLO node available on the selected compute
+machine and record its topic, message type, fields, QoS and image input:
+
+```bash
+ros2 pkg list | grep -Ei 'yolo|detect'
+ros2 pkg executables | grep -Ei 'yolo|detect'
+ros2 topic list -t | grep -Ei 'yolo|detect'
+```
+
+For each discovered detection topic:
+
+```bash
+ros2 topic info <DETECTION_TOPIC> --verbose
+ros2 interface show <DETECTION_MESSAGE_TYPE>
+```
+
+Do not invent `/yolo/detections` or assume it is JSON. Do not reinterpret
+`TargetInfo.similarity` as class confidence without an explicit adapter and
+tests. Navigation must remain disabled while this interface is being added.
+
+The remainder of this section documents the **legacy reference detector only**
+for camera/interface diagnostics. It is not the final bottle-search workflow.
 
 All commands below run inside the robot ROS Docker container unless explicitly
 labelled otherwise. On the Raspberry Pi host, enter the existing container with:
@@ -448,7 +490,7 @@ ros2 interface show balance_interface/msg/TargetInfo
 
 Before a target is set, the expected detector status is `IDLE`.
 
-### 3. Prepare a target reference image
+### 3. Optional legacy diagnostic: prepare a reference image
 
 The official CLI client expects an image file that is accessible **inside the
 Docker container**. Use a close, sharp, tightly cropped image containing the
@@ -485,7 +527,10 @@ ls -lh /home/ros2_ws/src/ee3033-search-policy/target_samples/bottle_target.jpg
 Target reference photographs are experiment inputs and should not be committed
 unless the team deliberately wants them in Git.
 
-### 4. Set the target (for example, a bottle)
+### 4. Optional legacy diagnostic: set an appearance target
+
+This command tests the installed reference-matching detector only. It must not
+be described as automatic YOLO bottle classification.
 
 With the camera and detector still running:
 
@@ -516,7 +561,7 @@ and a finite similarity. A stream of `detected: false` while status is
 `SEARCHING` means the pipeline is running but the live image has not matched
 the reference strongly enough.
 
-### 5. Start this repository's target confirmation and localization
+### 5. Legacy integration test: confirmation and localization
 
 The unified launch starts `target_checker`, `target_localizer`,
 `mission_manager`, and `search_manager`. Its safe default does not send
