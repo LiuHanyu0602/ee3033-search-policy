@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import time
 
+from ament_index_python.packages import get_package_share_directory
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
@@ -18,20 +19,27 @@ from ee3033_search_policy_interfaces.msg import TargetObservation
 from ee3033_search_policy_interfaces.srv import SetTargetClass
 
 from .yolo_adapter_session import AdapterSession
+from .yolo_bearing import RawCameraCalibration
 
 
 class YoloDetectionAdapter(Node):
     def __init__(self):
         super().__init__('yolo_detection_adapter')
+        calibration = Path(__file__).resolve().parents[1] / 'results' / 'updated_calibration' / 'calibration.npz'
+        if not calibration.is_file():
+            calibration = Path(get_package_share_directory('ee3033_search_policy')) / 'calibration' / 'calibration.npz'
         defaults = {
             'labels_file': '', 'detections_topic': '/yolo/detections',
             'camera_info_topic': '/camera_info', 'mission_topic': '/mission/state',
             'required_frames': 3, 'max_age_s': .5, 'max_gap_s': .4,
             'minimum_iou': .2, 'geometry_verified': False,
+            'calibration_file': str(calibration),
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
         p = lambda name: self.get_parameter(name).value
+        self.calibration = RawCameraCalibration.load(
+            Path(str(p('calibration_file'))).expanduser())
         # Missing labels fail at startup: never guess class IDs or download models.
         with Path(str(p('labels_file'))).expanduser().open(encoding='utf-8') as f:
             labels = json.load(f)
@@ -65,15 +73,21 @@ class YoloDetectionAdapter(Node):
         return self.get_clock().now().nanoseconds*1e-9
 
     def _camera(self, msg):
-        if (msg.width > 0 and msg.height > 0 and msg.header.frame_id and
-                msg.k[0] > 0 and msg.k[4] > 0):
-            # A changed geometry invalidates the current episode.
-            if self.camera is not None and (msg.width, msg.height, msg.header.frame_id,
-                    tuple(msg.k), tuple(msg.d)) != (self.camera.width, self.camera.height,
-                    self.camera.header.frame_id, tuple(self.camera.k), tuple(self.camera.d)):
-                self.session.clear()
-                self._configuration()
-            self.camera = msg
+        try:
+            self.calibration.validate_camera_info(msg)
+        except ValueError as exc:
+            self.camera = None
+            self.last_frame = ''
+            self.session.clear()
+            self._configuration()
+            self.get_logger().error('Rejected CameraInfo: ' + str(exc),
+                                    throttle_duration_sec=2.0)
+            return
+        if self.camera is not None and msg.header.frame_id != self.camera.header.frame_id:
+            self.session.clear()
+            self.last_frame = ''
+            self._configuration()
+        self.camera = msg
 
     def _state(self, msg):
         old_episode = self.session.episode_id
@@ -125,6 +139,11 @@ class YoloDetectionAdapter(Node):
                                     self._now(), time.monotonic())
             if o is None:
                 return
+            try:
+                bearing = self.calibration.bearing(o.cx, o.cy)
+            except ValueError:
+                self.session.frames.reset()
+                raise
             result = TargetObservation()
             result.header = msg.header
             result.episode_id = self.session.episode_id
@@ -133,6 +152,7 @@ class YoloDetectionAdapter(Node):
             result.center_x, result.center_y = o.cx, o.cy
             result.width, result.height = o.width, o.height
             result.image_width, result.image_height = self.camera.width, self.camera.height
+            result.bearing_rad = bearing
             result.confirmed = self.session.frames.confirmed
             self.observations.publish(result)
         except (ValueError, TypeError, AttributeError, OverflowError) as exc:

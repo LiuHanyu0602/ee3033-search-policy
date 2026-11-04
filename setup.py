@@ -18,6 +18,10 @@ setup(
         ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
         ("share/" + package_name + "/config", glob("config/*.yaml")),
         (
+            "share/" + package_name + "/calibration",
+            ["results/updated_calibration/calibration.npz"],
+        ),
+        (
             "share/" + package_name + "/models",
             ["models/tiny_search_policy_weights.npz"],
         ),

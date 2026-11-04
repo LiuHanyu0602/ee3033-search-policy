@@ -13,5 +13,8 @@ float64 width
 float64 height
 uint32 image_width
 uint32 image_height
+# Undistorted bbox-centre horizontal angle in radians.
+# Optical +z is zero, image-right (+x) is positive; not base/map yaw.
+float64 bearing_rad
 # True only after fresh distinct-frame confirmation.
 bool confirmed

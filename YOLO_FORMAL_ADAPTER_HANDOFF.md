@@ -12,6 +12,34 @@ String JSON), /target/adapter_status (latched String).
 Inputs: parameter detections_topic (default /yolo/detections, must verify live),
 camera_info_topic (default /camera_info), mission_topic (default /mission/state).
 
+## Horizontal bearing
+
+`TargetObservation.bearing_rad` is the undistorted bbox-centre horizontal angle:
+`atan2(x_undistorted, 1)`, in radians, positive image-right, zero along optical
+`+z`. It is not robot/map yaw. No elevation angle is published; bbox fields remain
+unchanged. Camera motion can still affect this angle: localization must use the
+source image timestamp and the actual optical-frame TF.
+
+The default `calibration_file` is `results/updated_calibration/calibration.npz`
+when running from the source tree, or the installed package's
+`share/ee3033_search_policy/calibration/calibration.npz`. This is the raw
+640x480 calibration matching `results/updated_calibration/camera_info.yaml`,
+not the alpha0 rectified calibration. Missing/invalid calibration fails startup.
+CameraInfo must match its resolution, K, D and plumb_bob model; cropped/binned
+geometry is rejected. Mismatches log an error, invalidate the episode and block
+observations. `geometry_verified` still requires operator verification that the
+detector uses raw pixels and the stated optical frame.
+
+Inverse distortion is checked by forward projection (normalized residual at most
+1e-7). Nonconvergent pixels produce a rejection log and no observation, never a
+zero-angle fallback. With the current saved coefficients, the extreme right-top
+and right-bottom corners fail this check; valid full-image coverage is NOT claimed.
+Validate/tune calibration coverage with held-out raw images before deployment.
+
+Rebuild `ee3033_search_policy_interfaces` and re-source the workspace after this
+message change; all observation producers/consumers must use the rebuilt type.
+Offline geometry tests: `python3 -m pytest test/test_yolo_bearing.py`.
+
 The node deliberately does not publish /target_found; existing navigation cannot
 be triggered by it. Typed mission/localizer consumers are NOT integrated yet.
 Do not start full_runtime or enable movement to test this checkpoint.
