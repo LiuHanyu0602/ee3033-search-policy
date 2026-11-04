@@ -6,23 +6,23 @@ search_policy_dry_run:
     navigate_action: /navigate_to_pose
     status_period_s: 2.0
 
-yolo_ncnn_detector:
+yolo_detection_adapter:
   ros__parameters:
-    image_topic: /image_raw/compressed
-    observation_topic: /detector/target_observation
-    model_param_path: ''
-    model_bin_path: ''
-    target_class: bottle
-    target_class_id: 39
-    confidence_threshold: 0.70
+    detections_topic: /yolo/detections
+    camera_info_topic: /camera_info
+    mission_topic: /mission/state
+
+    labels_file: ''
+    geometry_verified: false
+
     required_frames: 3
-    max_frame_age_s: 0.5
-    max_frame_gap_s: 0.4
+    max_age_s: 0.5
+    max_gap_s: 0.4
     minimum_iou: 0.2
 
 target_checker:
   ros__parameters:
-    observation_topic: /detector/target_observation
+    observation_topic: /target/observation
     target_found_topic: /target_found
     target_class_id: 39
     confidence_threshold: 0.70
