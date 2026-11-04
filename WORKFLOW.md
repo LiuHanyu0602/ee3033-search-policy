@@ -6,7 +6,9 @@
 ----------
 这是供团队阅读、现场参考的流程文档，不是脚本或一键启动程序。
 下列命令由现场操作员逐段执行；标明「运动」的命令需现场明确授权。
-当前范围不包含 YOLO、目标位置报告、自动返航、balance_gui 或点击导航目标。
+主体导航流程不包含 YOLO 闭环、目标位置报告、自动返航、balance_gui 或点击导航目标。
+2026-11-04 补充了独立、无运动的 YOLO 角度输出验收，见下方记录；
+它不是自动搜索遇目标后停止、定位、接近目标的完整闭环。
 不要把 /mission/start_mapping 当成真实建图启动：它只切换任务管理器状态。
 
 证据基线：2026-11-03，ROS 2 Humble。
@@ -54,6 +56,52 @@ e17ec86c75e07508dc3b4fb836e0461cf6ef3422。
   - 本轮为 physical robot motion（有界导航），没有相机/YOLO 观察验收，
     没有目标定位报告；不能称为目标检测闭环或 69% 实际图像覆盖。
 
+
+## 2026-11-04 补充：静止实机 YOLO 角度输出已验收
+
+类别：**non-actuating robot integration（静止、无运动实机整合）**。
+本轮未发送导航目标；操作员在 2026-11-04 14:19（UTC+08:00）确认验收通过。
+Pi 已回传的代码基线为 `robot-validation-hardening`、
+`9c4a641f50a6ae9d7a316b846371999b7993b2f6`。
+完整接口、证据边界、启动命令和驱动回退方式见
+[YOLO adapter 交接记录](YOLO_FORMAL_ADAPTER_HANDOFF.md#2026-11-04-stationary-pi-acceptance)。
+
+本轮复用了现有 Pi 本地 YOLOv8n NCNN，不重新部署模型，不改检测脚本：
+
+```text
+/camera/image_raw + /camera_info（已核对原始图像标定）
+  -> 现有 yolo_ncnn -> /yolo/detections（String JSON）
+  -> yolo_detection_adapter（精确匹配原图时间戳、类别过滤、多帧确认）
+  -> /target/observation（原始 header、episode、bbox、水平 bearing_rad）
+```
+
+- 实测发现 usb_cam 0.8.1 的 epoch/monotonic 换算将 `tv_usec` 错除以 1000。
+  经批准，在独立工作区基于官方 0.8.1 应用官方单行修复并构建；
+  未覆盖 `/opt/ros` 或课程核心包。运行相机时需显式 source 该 overlay，
+  不是仓库更新后自动生效。
+- 修复前 IMAGE 年龄约 832 ms；修复后最后一次 6 秒采样保留的最近
+  60 条 IMAGE 年龄为 min/median/max = 37.93/39.04/40.62 ms，
+  JSON 为 58.36/59.11/79.01 ms，低于原有 500 ms 门限。
+  这是消息年龄，不是曝光到结果的完整延迟，也不是长期延迟上界。
+- 右侧 bbox 中心 `(432.0,176.5)`：`+0.2412075729 rad`，约 `+13.82°`；
+  左侧 `(151.25,192.75)`：`-0.2300178216 rad`，约 `-13.18°`。
+  两条样本均为 `bottle`、class 39、640x480、`confirmed=true`。
+- 操作员另行确认新 episode 配置和重新确认已通过。
+  会话贴出的左右样本本身是同一 episode；新 UUID/服务响应未归档，
+  因此不把这两条样本当作独立 episode 的直接证据。
+- 角度基于去畸变的 bbox 中心，光学 +z 为零、画面右侧为正；
+  主点 x 约 288.46，不是图像中心 320。不是底盘或地图 yaw。
+
+测试通过范围：现有 NCNN -> JSON -> 正式 observation、短时新鲜度、
+左右符号，以及操作员确认的配置/多帧流程。
+未测：独立物理角度真值误差、近零角检查、完整视场有效性、光学外参、
+同一物体持续关联、自动停止搜索、多视角地图定位、定位后安全接近。
+`tracking_id` 为空，不能宣称已具备可靠的多目标实例关联。
+
+测试只使用 `/bearing_test/mission_state`，不调用 `/mission/start_search`。
+当前 adapter 不发布 `/target_found`，不发送导航目标，也不发布 `/cmd_vel`。
+后续先审计实际 TF/定位接口并设计可验证的停止握手；
+主动移动定位和导航接近必须另行完成安全检查、测试并获得现场授权。
 
 ## 一、机器、终端和路径
 
