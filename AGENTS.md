@@ -327,3 +327,20 @@ For the first physical motion test, keep single-goal mode enabled and
 `max_navigation_goals=1`. Do not authorize continuous search until the
 single-goal terminal state, physical stop, Nav2 result, and operator cancel path
 have all been observed on the robot.
+
+
+## Balancing-aware complete YOLO validation entry
+
+Before using the new `yolo_complete_validation.launch.py`, read
+`BALANCING_YOLO_COMPLETE_HANDOFF.md` in full. It documents a candidate integration,
+not robot acceptance. Never run old full_runtime/mission_manager/search_manager
+or target_checker alongside this new four-node entry point.
+
+The new gate allows bounded balancing motion; it does not require exact zero
+velocity. Require a matching per-stop terminal acknowledgement, a fresh post-
+terminal odometry window, verified limits and dynamic optical-frame geometry
+before reporting coordinates. Cancel acknowledgement or local timeout is not
+remote termination. Never loosen limits or rewrite source timestamps to pass.
+Keep navigation disabled, single-goal budget one, and automatic return disabled.
+No bearing-only blind approach is implemented or authorized. Run the new tests,
+full regression suite and ROS non-actuating tests before physical validation.

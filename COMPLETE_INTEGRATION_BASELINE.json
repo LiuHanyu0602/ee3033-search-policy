@@ -1,0 +1,13 @@
+{
+  "branch": "robot-validation-hardening",
+  "git_blob_sha1": {
+    "ee3033_search_policy/search_manager_node.py": "bcce598434318482a7e491bed609a7292980e80c",
+    "ee3033_search_policy/nav2_client.py": "711775cf9a8c18d1e1fbcfabe1038f900ecd82be",
+    "ee3033_search_policy/target_stop_guard.py": "14770aab818d383d1169f40a6b7026ae0a8a3dc6",
+    "ee3033_search_policy/stamped_target_localizer_node.py": "0204cc483853295640a930d96518fa31f8145397",
+    "ee3033_search_policy/stamped_localization.py": "378556984ce1f1165d660813faf8b4e7873455e2",
+    "ee3033_search_policy/yolo_detection_adapter_node.py": "15d77cb65b1e28c93429c9c51fc967b729dfaa8b",
+    "ee3033_search_policy/yolo_adapter_session.py": "8aaaac710d455169fee1b6bf84619a30c8b4c158",
+    "ee3033_search_policy/yolo_detection_core.py": "03bd3ed00407dab58b3177dd4f1f52722170749d"
+  }
+}

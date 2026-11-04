@@ -1,0 +1,61 @@
+# Provisional limits, NOT measured acceptance values. No robot launch by extraction.
+search_manager:
+  ros__parameters:
+    navigation_enabled: false
+    single_goal_mode: true
+    max_navigation_goals: 1
+    return_home_enabled: false
+    exclusive_navigation_verified: false
+    robot_geometry_verified: false
+    scan_topic: /scan
+    lease_timeout_s: 0.6
+    tf_max_age_s: 0.3
+    scan_max_age_s: 0.5
+
+target_mission_coordinator:
+  ros__parameters:
+    odom_topic: /odom
+    odom_frame: odom_combined
+    limits_verified: false
+    dynamic_camera_tf_verified: false
+    stop_timeout_s: 12.0
+    localization_timeout_s: 15.0
+    mission_timeout_s: 300.0
+    input_max_age_s: 0.5
+    maximum_variance_m2: 0.25
+    minimum_report_frames: 3
+    report_consistency_m: 0.10
+    stability_window_s: 1.5
+    stability_min_samples: 15
+    stability_max_age_s: 0.3
+    stability_max_gap_s: 0.2
+    stability_max_position_span_m: 0.06
+    stability_max_yaw_span_rad: 0.15
+    stability_max_linear_rms_mps: 0.06
+    stability_max_angular_rms_rps: 0.12
+    stability_max_linear_peak_mps: 0.20
+    stability_max_angular_peak_rps: 0.30
+
+yolo_detection_adapter:
+  ros__parameters:
+    labels_file: ''
+    input_format: detection_array
+    detections_topic: /yolo/detections
+    camera_info_topic: /camera_info
+    image_topic: /camera/image_raw
+    geometry_verified: false
+    required_frames: 3
+    max_age_s: 0.5
+    max_gap_s: 0.4
+    minimum_iou: 0.2
+
+stamped_target_localizer:
+  ros__parameters:
+    calibration_file: ''
+    geometry_verified: false
+    assume_ground_contact: false
+    camera_info_topic: /camera_info
+    map_frame: map
+    maximum_age_s: 0.5
+    minimum_range_m: 0.15
+    maximum_range_m: 4.0
