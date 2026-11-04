@@ -20,8 +20,8 @@ class TargetChecker(Node):
             '/detector/target_observation'
         )
         self.declare_parameter(
-            'target_found_topic',
-            '/target_found'
+        'observation_topic',
+        '/target/observation'
         )
         self.declare_parameter('target_class_id', 39)
         self.declare_parameter('confidence_threshold', 0.70)
