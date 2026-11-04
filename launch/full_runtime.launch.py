@@ -45,8 +45,8 @@ def generate_launch_description():
         ),
         Node(
             package='ee3033_search_policy',
-            executable='target_checker',
-            name='target_checker',
+            executable='yolo_detection_adapter',
+            name='yolo_detection_adapter',
             output='screen',
             parameters=[common],
         ),
