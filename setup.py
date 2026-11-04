@@ -36,6 +36,7 @@ setup(
             ),
             "planner_test = ee3033_search_policy.planner_test_node:main",
             "target_checker = ee3033_search_policy.target_checker:main",
+            "yolo_ncnn_detector = ee3033_search_policy.yolo_ncnn_node:main",
             "target_localizer = ee3033_search_policy.target_localizer_node:main",
             "mission_manager = ee3033_search_policy.mission_manager_node:main",
             "search_manager = ee3033_search_policy.search_manager_node:main",
