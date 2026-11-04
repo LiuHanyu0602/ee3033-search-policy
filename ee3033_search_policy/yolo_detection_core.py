@@ -21,6 +21,13 @@ class Observation:
     tracking_id: str = ''
 
 
+@dataclass(frozen=True)
+class DetectionFrame:
+    stamp: float
+    frame_id: str
+    observations: tuple[Observation, ...]
+
+
 class TargetConfiguration:
     """Label table must come from the deployed model, not guessed IDs."""
 
@@ -76,14 +83,32 @@ def select_observation(msg, config, image_width, image_height):
         if not all(math.isfinite(float(v)) for v in values):
             continue
         score, x, y, w, h, theta = map(float, values)
-        if not config.threshold <= score <= 1 or w <= 0 or h <= 0:
-            continue
         if abs(theta) > 1e-6:
-            continue
-        if x-w/2 < 0 or y-h/2 < 0 or x+w/2 > image_width or y+h/2 > image_height:
             continue
         valid.append(Observation(stamp, msg.header.frame_id, d.class_id,
                                  config.class_name, score, x, y, w, h, str(d.id)))
+    return select_frame_observation(
+        DetectionFrame(stamp, msg.header.frame_id, tuple(valid)), config,
+        image_width, image_height)
+
+
+def select_frame_observation(frame, config, image_width, image_height):
+    """Select from normalized observations without a detector message dependency."""
+    if image_width <= 0 or image_height <= 0:
+        raise ValueError('Positive detector image dimensions required')
+    if config.class_id is None:
+        return None
+    valid = []
+    for o in frame.observations:
+        if o.class_id != config.class_id or o.class_name.strip().casefold() != config.class_name:
+            continue
+        if (not all(math.isfinite(v) for v in
+                    (o.confidence, o.cx, o.cy, o.width, o.height)) or
+                not config.threshold <= o.confidence <= 1 or o.width <= 0 or o.height <= 0 or
+                o.cx-o.width/2 < 0 or o.cy-o.height/2 < 0 or
+                o.cx+o.width/2 > image_width or o.cy+o.height/2 > image_height):
+            continue
+        valid.append(o)
     return min(valid, key=lambda o: (-o.confidence, o.cx, o.cy, o.tracking_id)) if valid else None
 
 

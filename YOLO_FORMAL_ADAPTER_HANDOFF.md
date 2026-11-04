@@ -1,9 +1,11 @@
 # Formal YOLO adapter: phase checkpoint
 
 Adds yolo_detection_adapter_node.py, yolo_adapter_session.py and tests.
-Run using python -m from repository root; setup.py/launch installation is pending.
-Depends on yolo_msgs, rclpy, sensor_msgs, std_msgs, std_srvs and the already-built
-ee3033_search_policy_interfaces package. No Ultralytics needed.
+Run using python -m from repository root, or `ros2 run ee3033_search_policy
+yolo_detection_adapter` after building the package. Launch integration is pending.
+Depends on rclpy, sensor_msgs, std_msgs, std_srvs and the already-built
+ee3033_search_policy_interfaces package. Typed input additionally requires
+yolo_msgs; NCNN JSON mode does not import it. No Ultralytics needed by the adapter.
 
 Services: /target/set_class (SetTargetClass), /target/reset (Trigger).
 Outputs: /target/observation (TargetObservation, volatile),
@@ -11,6 +13,63 @@ Outputs: /target/observation (TargetObservation, volatile),
 String JSON), /target/adapter_status (latched String).
 Inputs: parameter detections_topic (default /yolo/detections, must verify live),
 camera_info_topic (default /camera_info), mission_topic (default /mission/state).
+
+## Existing Pi NCNN JSON input
+
+The operator verified `/yolo/detections` from `yolo_ncnn` is
+`std_msgs/msg/String`, RELIABLE, VOLATILE. Its schema is:
+
+```json
+{"timestamp":{"sec":1793770649,"nanosec":722597000},"detections":[
+  {"class_id":39,"class_name":"bottle","confidence":0.88330078125,
+   "bbox":[240.875,16.5,365.125,311.0]}]}
+```
+
+Use `input_format:=ncnn_json` for this producer. The default remains
+`input_format:=detection_array` for existing typed producers. Do not start both
+message types on the same topic.
+
+JSON has no frame ID or image size. In JSON mode the adapter also subscribes to
+`image_topic` (default `/camera/image_raw`, BEST_EFFORT depth 1) and retains only
+the latest 64 image metadata records, not pixel buffers. It matches timestamps
+exactly in integer nanoseconds; the output header preserves the source stamp and
+frame without substitution from a newer image or CameraInfo. Missing, stale or
+future source metadata, unsupported encodings, malformed JSON and invalid bbox
+values log explicit rejection and produce no observation. If a detection arrives
+before its source metadata, it is rejected rather than guessed or queued; later
+fresh matching frames recover normally.
+
+The JSON subscription is RELIABLE depth 1. Empty detection arrays are valid
+heartbeats and break partial confirmation sequences. No tracking ID is invented;
+the existing IoU continuity is not proof of persistent physical identity.
+Source-image geometry must agree with the validated CameraInfo; a change clears
+the episode and metadata cache. The operator observed 640x480 rgb8 with matching
+new K/D and frame name `default_cam`; that name alone does NOT prove a valid
+optical-frame TF for map localization.
+
+For stationary tests, set `mission_topic:=/bearing_test/mission_state` and publish
+test state strings there only; do not call production `/mission/start_search`.
+No search manager or localizer is required. Export the actual model label table
+to `labels_file` and build/source the genuine interface package first.
+The existing Pi detector script and NCNN model are unchanged.
+
+Targeted offline tests:
+
+```bash
+python3 -m pytest test/test_yolo_json_input.py test/test_yolo_bearing.py \
+  test/test_yolo_detection_core.py test/test_yolo_adapter_session.py \
+  test/test_target_localization_core.py -q
+```
+
+2026-11-04 FAGIO offline checkpoint, based on `7616ddc` plus JSON changes:
+102 tests passed; Python compilation and `git diff --check` passed. Tests include
+the two operator-supplied NCNN samples and ROS test-double node initialization
+with `yolo_msgs` unavailable. This is not a ROS build or live adapter acceptance.
+The samples' bottle centres yield approximately +0.02429660 rad (+1.3921 deg)
+and +0.14201882 rad (+8.1371 deg) with the saved calibration. These are computed
+reference values, not independently surveyed physical angle measurements.
+Pi build, exact metadata matching rate, latency and stationary live angle
+validation remain pending. No navigation was started by this change.
 
 ## Horizontal bearing
 

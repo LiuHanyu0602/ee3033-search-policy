@@ -10,6 +10,8 @@ import numpy as np
 import pytest
 
 from ee3033_search_policy.yolo_bearing import RawCameraCalibration
+from ee3033_search_policy.yolo_adapter_session import AdapterSession
+from ee3033_search_policy.yolo_json_input import NcnnJsonInput
 
 
 CALIBRATION = Path(__file__).resolve().parents[1] / 'results/updated_calibration/calibration.npz'
@@ -107,17 +109,46 @@ def test_invalid_calibration_rejected(tmp_path, key, value):
 
 
 @pytest.fixture
-def adapter(calibration, monkeypatch):
+def adapter(calibration, monkeypatch, tmp_path):
+    labels = tmp_path / 'labels.json'
+    labels.write_text('{"39":"bottle","0":"person"}')
+
+    class OfflineNode:
+        def __init__(self, name):
+            self.parameters = {'input_format': 'ncnn_json', 'labels_file': str(labels)}
+            self.subscriptions = []
+
+        def declare_parameter(self, name, value):
+            self.parameters.setdefault(name, value)
+
+        def get_parameter(self, name):
+            return NS(value=self.parameters[name])
+
+        def create_publisher(self, *args):
+            return Mock()
+
+        def create_subscription(self, message_type, topic, callback, qos):
+            self.subscriptions.append((message_type, topic, callback))
+
+        def create_service(self, *args):
+            return Mock()
+
+        def create_timer(self, *args):
+            return Mock()
+
+        def get_logger(self):
+            return Mock()
+
     modules = {
         'ament_index_python.packages': {'get_package_share_directory': Mock()},
         'rclpy': {},
-        'rclpy.node': {'Node': object},
-        'rclpy.qos': {'QoSProfile': object, 'ReliabilityPolicy': object,
-                      'DurabilityPolicy': object},
-        'sensor_msgs.msg': {'CameraInfo': object},
-        'std_msgs.msg': {'String': object},
+        'rclpy.node': {'Node': OfflineNode},
+        'rclpy.qos': {'QoSProfile': lambda **kwargs: NS(**kwargs),
+                      'ReliabilityPolicy': NS(RELIABLE=1, BEST_EFFORT=2),
+                      'DurabilityPolicy': NS(TRANSIENT_LOCAL=1)},
+        'sensor_msgs.msg': {'CameraInfo': object, 'Image': object},
+        'std_msgs.msg': {'String': NS, 'Header': lambda: NS(stamp=NS())},
         'std_srvs.srv': {'Trigger': object},
-        'yolo_msgs.msg': {'DetectionArray': object},
         'ee3033_search_policy_interfaces.msg': {'TargetObservation': NS},
         'ee3033_search_policy_interfaces.srv': {'SetTargetClass': object},
     }
@@ -125,6 +156,7 @@ def adapter(calibration, monkeypatch):
         module = ModuleType(name)
         module.__dict__.update(exports)
         monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setitem(sys.modules, 'yolo_msgs', None)
     path = CALIBRATION.parents[2] / 'ee3033_search_policy/yolo_detection_adapter_node.py'
     spec = importlib.util.spec_from_file_location(
         'ee3033_search_policy._bearing_adapter_under_test', path)
@@ -139,6 +171,7 @@ def adapter(calibration, monkeypatch):
     node.session = Mock()
     node.session.episode_id = 'episode-1'
     node.session.frames.confirmed = True
+    node.json_input = Mock()
     node._now = Mock(return_value=10.)
     node._configuration = Mock()
     node.get_logger = Mock(return_value=Mock())
@@ -190,3 +223,63 @@ def test_adapter_accepts_matching_camera_info(adapter):
     adapter._camera(info)
     assert adapter.camera is info
     adapter.session.clear.assert_not_called()
+
+
+def test_json_adapter_outputs_angle_without_yolo_msgs(adapter, monkeypatch):
+    from test_yolo_json_input import LIVE_SAMPLE, image, source_time
+    import json
+
+    module = sys.modules[adapter.__class__.__module__]
+    monkeypatch.setattr(module, 'time', NS(monotonic=lambda: 100.))
+    adapter.json_input = NcnnJsonInput()
+    adapter.camera.header.frame_id = 'default_cam'
+    adapter._now.return_value = source_time()
+    adapter.session = AdapterSession({39: 'bottle', 0: 'person'}, required_frames=1)
+    adapter.session.set_state('WAIT_FOR_TARGET')
+    adapter._image(image())
+    adapter._detect_json(NS(data=json.dumps(LIVE_SAMPLE)))
+    assert adapter.session.ready(source_time(), 100.)
+    adapter.session.configure('bottle', .65, source_time(), 100.)
+    adapter.session.set_state('SEARCHING')
+    sample = json.loads(json.dumps(LIVE_SAMPLE))
+    sample['timestamp']['nanosec'] += 30_000_000
+    adapter._now.return_value = source_time(sample)
+    adapter._image(image(sample))
+    adapter._detect_json(NS(data=json.dumps(sample)))
+    result = adapter.observations.publish.call_args.args[0]
+    assert result.header.frame_id == 'default_cam'
+    assert result.header.stamp.nanosec == sample['timestamp']['nanosec']
+    assert result.bearing_rad == pytest.approx(adapter.calibration.bearing(303., 163.75))
+    assert (result.center_x, result.center_y, result.width, result.height) == (
+        303., 163.75, 124.25, 294.5)
+    assert result.confirmed
+
+
+def test_json_adapter_rejects_missing_image_with_log(adapter):
+    from test_yolo_json_input import LIVE_SAMPLE, source_time
+    import json
+
+    adapter.json_input = NcnnJsonInput()
+    adapter._now.return_value = source_time()
+    adapter.session.frames.max_age = .5
+    adapter._detect_json(NS(data=json.dumps(LIVE_SAMPLE)))
+    adapter.observations.publish.assert_not_called()
+    adapter.get_logger.return_value.warning.assert_called_once()
+
+
+def test_changed_source_image_clears_cached_metadata_and_episode(adapter):
+    adapter._image(NS(width=320, height=320, header=NS(frame_id='camera_optical')))
+    adapter.json_input.clear.assert_called_once()
+    adapter.session.clear.assert_called_once()
+    adapter._configuration.assert_called_once()
+    adapter.get_logger.return_value.warning.assert_called_once()
+
+
+def test_json_node_initializes_without_yolo_msgs(adapter):
+    node = adapter.__class__()
+    assert node.parameters['input_format'] == 'ncnn_json'
+    topics = {topic for _, topic, _ in node.subscriptions}
+    assert '/yolo/detections' in topics
+    assert '/camera/image_raw' in topics
+    assert '/camera_info' in topics
+    assert node.geometry_verified is False

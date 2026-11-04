@@ -43,6 +43,7 @@ setup(
             "target_localizer = ee3033_search_policy.target_localizer_node:main",
             "mission_manager = ee3033_search_policy.mission_manager_node:main",
             "search_manager = ee3033_search_policy.search_manager_node:main",
+            "yolo_detection_adapter = ee3033_search_policy.yolo_detection_adapter_node:main",
         ],
     },
 )

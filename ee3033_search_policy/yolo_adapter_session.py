@@ -1,7 +1,9 @@
 """ROS-independent lifecycle for a configured YOLO search episode."""
 import uuid
 
-from .yolo_detection_core import FrameConfirmation, TargetConfiguration, select_observation
+from .yolo_detection_core import (
+    FrameConfirmation, TargetConfiguration, select_frame_observation, select_observation,
+)
 
 
 class AdapterSession:
@@ -47,19 +49,29 @@ class AdapterSession:
         self.episode_id = str(uuid.uuid4())
         return self.episode_id
 
-    def ingest(self, msg, width, height, ros_now, steady_now):
+    def _accept_source(self, stamp, frame_id, ros_now, steady_now):
         self.tick(ros_now, steady_now)
-        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec*1e-9
-        if (stamp <= 0 or not msg.header.frame_id or
+        if (stamp <= 0 or not frame_id or
                 not 0 <= ros_now-stamp <= self.frames.max_age):
             if not self.frames.confirmed:
                 self.frames.update(None, ros_now)
-            return None
+            return False
         if self.last_source_stamp is not None and stamp <= self.last_source_stamp:
-            return None
+            return False
         self.last_source_stamp, self.last_receipt = stamp, steady_now
-        if self.target.class_id is None or self.state != 'SEARCHING':
+        return self.target.class_id is not None and self.state == 'SEARCHING'
+
+    def ingest(self, msg, width, height, ros_now, steady_now):
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec*1e-9
+        if not self._accept_source(stamp, msg.header.frame_id, ros_now, steady_now):
             return None
         observation = select_observation(msg, self.target, width, height)
+        self.frames.update(observation, ros_now)
+        return observation
+
+    def ingest_frame(self, frame, width, height, ros_now, steady_now):
+        if not self._accept_source(frame.stamp, frame.frame_id, ros_now, steady_now):
+            return None
+        observation = select_frame_observation(frame, self.target, width, height)
         self.frames.update(observation, ros_now)
         return observation

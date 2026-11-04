@@ -1,4 +1,4 @@
-"""Typed YOLO adapter. Publishes observations, never navigation commands.
+"""YOLO adapter for typed detections or deployed NCNN JSON, without navigation.
 
 This phase does NOT publish /target_found; consumers must be integrated later.
 Run from repo root: python3 -m ee3033_search_policy.yolo_detection_adapter_node.
@@ -11,15 +11,15 @@ from ament_index_python.packages import get_package_share_directory
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
-from sensor_msgs.msg import CameraInfo
-from std_msgs.msg import String
+from sensor_msgs.msg import CameraInfo, Image
+from std_msgs.msg import Header, String
 from std_srvs.srv import Trigger
-from yolo_msgs.msg import DetectionArray
 from ee3033_search_policy_interfaces.msg import TargetObservation
 from ee3033_search_policy_interfaces.srv import SetTargetClass
 
 from .yolo_adapter_session import AdapterSession
 from .yolo_bearing import RawCameraCalibration
+from .yolo_json_input import NcnnJsonInput
 
 
 class YoloDetectionAdapter(Node):
@@ -34,10 +34,15 @@ class YoloDetectionAdapter(Node):
             'required_frames': 3, 'max_age_s': .5, 'max_gap_s': .4,
             'minimum_iou': .2, 'geometry_verified': False,
             'calibration_file': str(calibration),
+            'input_format': 'detection_array', 'image_topic': '/camera/image_raw',
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
         p = lambda name: self.get_parameter(name).value
+        input_format = str(p('input_format'))
+        if input_format not in ('detection_array', 'ncnn_json'):
+            raise ValueError('input_format must be detection_array or ncnn_json')
+        self.json_input = NcnnJsonInput()
         self.calibration = RawCameraCalibration.load(
             Path(str(p('calibration_file'))).expanduser())
         # Missing labels fail at startup: never guess class IDs or download models.
@@ -60,7 +65,15 @@ class YoloDetectionAdapter(Node):
         self.config_pub = self.create_publisher(String, '/target/configuration', latched)
         self.classes_pub = self.create_publisher(String, '/target/available_classes', latched)
         self.classes_pub.publish(String(data=json.dumps(self.session.target.labels)))
-        self.create_subscription(DetectionArray, str(p('detections_topic')), self._detect, sensors)
+        if input_format == 'ncnn_json':
+            detections_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE)
+            self.create_subscription(String, str(p('detections_topic')), self._detect_json,
+                                     detections_qos)
+            self.create_subscription(Image, str(p('image_topic')), self._image, sensors)
+        else:
+            from yolo_msgs.msg import DetectionArray
+            self.create_subscription(DetectionArray, str(p('detections_topic')),
+                                     self._detect, sensors)
         self.create_subscription(CameraInfo, str(p('camera_info_topic')), self._camera, sensors)
         self.create_subscription(String, str(p('mission_topic')), self._state, latched)
         self.create_service(SetTargetClass, '/target/set_class', self._configure)
@@ -78,6 +91,7 @@ class YoloDetectionAdapter(Node):
         except ValueError as exc:
             self.camera = None
             self.last_frame = ''
+            self.json_input.clear()
             self.session.clear()
             self._configuration()
             self.get_logger().error('Rejected CameraInfo: ' + str(exc),
@@ -85,6 +99,7 @@ class YoloDetectionAdapter(Node):
             return
         if self.camera is not None and msg.header.frame_id != self.camera.header.frame_id:
             self.session.clear()
+            self.json_input.clear()
             self.last_frame = ''
             self._configuration()
         self.camera = msg
@@ -137,27 +152,64 @@ class YoloDetectionAdapter(Node):
         try:
             o = self.session.ingest(msg, self.camera.width, self.camera.height,
                                     self._now(), time.monotonic())
-            if o is None:
-                return
-            try:
-                bearing = self.calibration.bearing(o.cx, o.cy)
-            except ValueError:
-                self.session.frames.reset()
-                raise
-            result = TargetObservation()
-            result.header = msg.header
-            result.episode_id = self.session.episode_id
-            result.class_id, result.class_name = o.class_id, o.class_name
-            result.confidence, result.tracking_id = o.confidence, o.tracking_id
-            result.center_x, result.center_y = o.cx, o.cy
-            result.width, result.height = o.width, o.height
-            result.image_width, result.image_height = self.camera.width, self.camera.height
-            result.bearing_rad = bearing
-            result.confirmed = self.session.frames.confirmed
-            self.observations.publish(result)
+            self._publish_observation(o, msg.header)
         except (ValueError, TypeError, AttributeError, OverflowError) as exc:
             self.session.frames.update(None, self._now())
             self.get_logger().warning('Rejected detection: ' + str(exc))
+
+    def _image(self, msg):
+        if not self.geometry_verified or self.camera is None:
+            return
+        try:
+            if ((msg.width, msg.height, msg.header.frame_id) !=
+                    (self.camera.width, self.camera.height, self.camera.header.frame_id)):
+                raise ValueError('Source Image size/frame does not match calibrated CameraInfo')
+            self.json_input.record_image(msg, time.monotonic())
+        except ValueError as exc:
+            self.json_input.clear()
+            self.last_frame = ''
+            self.session.clear()
+            self._configuration()
+            self.get_logger().warning('Rejected source Image: ' + str(exc),
+                                      throttle_duration_sec=2.0)
+
+    def _detect_json(self, msg):
+        if not self.geometry_verified or self.camera is None:
+            return
+        try:
+            now, steady_now = self._now(), time.monotonic()
+            frame, image = self.json_input.match(
+                msg.data, now, steady_now, self.session.frames.max_age)
+            self.last_frame = frame.frame_id
+            o = self.session.ingest_frame(frame, image.width, image.height, now, steady_now)
+            header = Header()
+            header.stamp.sec, header.stamp.nanosec = divmod(image.stamp_ns, 1_000_000_000)
+            header.frame_id = image.frame_id
+            self._publish_observation(o, header)
+        except (ValueError, TypeError, AttributeError, OverflowError) as exc:
+            self.session.frames.update(None, self._now())
+            self.get_logger().warning('Rejected NCNN JSON: ' + str(exc),
+                                      throttle_duration_sec=2.0)
+
+    def _publish_observation(self, o, header):
+        if o is None:
+            return
+        try:
+            bearing = self.calibration.bearing(o.cx, o.cy)
+        except ValueError:
+            self.session.frames.reset()
+            raise
+        result = TargetObservation()
+        result.header = header
+        result.episode_id = self.session.episode_id
+        result.class_id, result.class_name = o.class_id, o.class_name
+        result.confidence, result.tracking_id = o.confidence, o.tracking_id
+        result.center_x, result.center_y = o.cx, o.cy
+        result.width, result.height = o.width, o.height
+        result.image_width, result.image_height = self.camera.width, self.camera.height
+        result.bearing_rad = bearing
+        result.confirmed = self.session.frames.confirmed
+        self.observations.publish(result)
 
     def _tick(self):
         old_episode = self.session.episode_id
