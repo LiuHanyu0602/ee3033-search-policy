@@ -1,0 +1,8 @@
+string class_name
+float64 min_confidence
+---
+bool success
+int32 class_id
+string normalized_class_name
+string episode_id
+string message
