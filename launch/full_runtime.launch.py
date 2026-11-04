@@ -38,6 +38,13 @@ def generate_launch_description():
         ),
         Node(
             package='ee3033_search_policy',
+            executable='yolo_ncnn_detector',
+            name='yolo_ncnn_detector',
+            output='screen',
+            parameters=[common],
+        ),
+        Node(
+            package='ee3033_search_policy',
             executable='target_checker',
             name='target_checker',
             output='screen',
