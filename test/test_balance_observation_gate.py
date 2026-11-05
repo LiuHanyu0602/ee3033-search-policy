@@ -3,7 +3,7 @@ from types import SimpleNamespace as NS
 import unittest
 from ee3033_search_policy.balance_observation_gate import (
     BalanceObservationGate, StabilityLimits, estimate_is_reportable,
-    navigation_terminal_known,
+    MotionInterruptGate, MotionInterruptLimits, navigation_terminal_known,
 )
 
 
@@ -96,6 +96,50 @@ class TestBalanceObservationGate(unittest.TestCase):
             self.assertFalse(check())
         self.assertFalse(estimate_is_reportable(self.estimate(),'e',39,'bottle',101.,99.9))
         self.assertFalse(estimate_is_reportable(self.estimate(),'e',39,'bottle',100.1,100.01))
+
+
+class TestMotionInterruptGate(unittest.TestCase):
+    def test_pid_jitter_does_not_interrupt(self):
+        gate = MotionInterruptGate()
+        for i in range(80):
+            t = 10+i*.02
+            ok, moved, why, _ = gate.add(
+                t,t,t,'odom_combined',.02*math.sin(i),0.,
+                .04*math.sin(i),.2*math.sin(i),0.,.3*math.sin(i))
+            self.assertTrue(ok, why)
+            self.assertFalse(moved, why)
+
+    def test_large_translation_interrupts_and_rebases(self):
+        gate = MotionInterruptGate()
+        gate.add(10.,10.,10.,'odom_combined',0.,0.,0.)
+        ok, moved, why, metrics = gate.add(
+            10.1,10.1,10.1,'odom_combined',.2,0.,0.)
+        self.assertTrue(ok)
+        self.assertTrue(moved)
+        self.assertEqual(why,'MOTION_INTERRUPT')
+        self.assertGreater(metrics['translation_m'],.15)
+        self.assertEqual(gate.generation,1)
+        self.assertEqual(len(gate.samples),1)
+
+    def test_large_rotation_interrupts_across_yaw_wrap(self):
+        gate = MotionInterruptGate()
+        gate.add(10.,10.,10.,'odom_combined',0.,0.,3.10)
+        self.assertFalse(gate.add(10.1,10.1,10.1,'odom_combined',0.,0.,-3.10)[1])
+        self.assertTrue(gate.add(10.2,10.2,10.2,'odom_combined',0.,0.,-2.60)[1])
+
+    def test_health_requires_fresh_monotonic_odom(self):
+        gate = MotionInterruptGate()
+        self.assertFalse(gate.evaluate(10.,10.)[0])
+        gate.add(10.,10.,10.,'odom_combined',0.,0.,0.)
+        self.assertTrue(gate.evaluate(10.1,10.1)[0])
+        self.assertFalse(gate.evaluate(10.4,10.4)[0])
+        self.assertFalse(gate.add(10.,10.1,10.1,'odom_combined',0.,0.,0.)[0])
+
+    def test_interrupt_limit_validation(self):
+        for kwargs in [dict(horizon_s=0),dict(max_age_s=float('nan')),
+                       dict(max_translation_m=-1)]:
+            with self.assertRaises(ValueError):
+                MotionInterruptLimits(**kwargs)
 
 
 if __name__ == '__main__':

@@ -12,7 +12,7 @@ from std_msgs.msg import String, Bool
 from std_srvs.srv import Trigger
 from ee3033_search_policy_interfaces.msg import TargetObservation, TargetEstimate
 from .balance_observation_gate import (
-    BalanceObservationGate, StabilityLimits, estimate_is_reportable,
+    MotionInterruptGate, MotionInterruptLimits, estimate_is_reportable,
 )
 
 
@@ -20,19 +20,20 @@ class TargetMissionCoordinator(Node):
     def __init__(self):
         super().__init__('target_mission_coordinator')
         defaults = dict(odom_topic='/odom', odom_frame='odom_combined',
-                        limits_verified=False, dynamic_camera_tf_verified=False,
+                        motion_interrupt_verified=False,
+                        dynamic_camera_tf_verified=False,
                         stop_timeout_s=12., localization_timeout_s=15.,
                         input_max_age_s=.5, maximum_variance_m2=.25,
                         minimum_report_frames=3, report_consistency_m=.10,
                         mission_timeout_s=300.)
-        for k, v in vars(StabilityLimits()).items():
-            defaults['stability_'+k] = v
+        for k, v in vars(MotionInterruptLimits()).items():
+            defaults['motion_interrupt_'+k] = v
         for k, v in defaults.items():
             self.declare_parameter(k, v)
         p = lambda k: self.get_parameter(k).value
-        self.gate = BalanceObservationGate(StabilityLimits(**{
-            k: p('stability_'+k) for k in vars(StabilityLimits())}))
-        self.verified = bool(p('limits_verified'))
+        self.gate = MotionInterruptGate(MotionInterruptLimits(**{
+            k: p('motion_interrupt_'+k) for k in vars(MotionInterruptLimits())}))
+        self.verified = bool(p('motion_interrupt_verified'))
         self.camera_motion_verified = bool(p('dynamic_camera_tf_verified'))
         self.odom_frame = str(p('odom_frame'))
         self.age = float(p('input_max_age_s'))
@@ -59,6 +60,10 @@ class TargetMissionCoordinator(Node):
         self.last_report_stamp = 0.
         self.report_frames = 0
         self.report_points = []
+        self.pending_report = None
+        self.localization_reset_count = 0
+        self.odom_healthy = False
+        self.terminal_seen = False
         self.search_deadline = None
         self.last_clock = None
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
@@ -66,6 +71,8 @@ class TargetMissionCoordinator(Node):
         self.state_pub = self.create_publisher(String, '/mission/state', latched)
         self.lease_pub = self.create_publisher(String, '/mission/lease', latched)
         self.diagnostic_pub = self.create_publisher(String, '/mission/diagnostics', latched)
+        self.localization_reset_pub = self.create_publisher(
+            String, '/target/localization_reset', latched)
         self.report_pub = self.create_publisher(TargetEstimate, '/target/estimate', latched)
         self.point_pub = self.create_publisher(PointStamped, '/target_position', latched)
         self.found_pub = self.create_publisher(Bool, '/target_found', latched)
@@ -149,11 +156,17 @@ class TargetMissionCoordinator(Node):
         if (msg.header.frame_id != self.odom_frame or not math.isfinite(norm) or
                 abs(norm-1.) > 1e-3):
             self.gate.clear('ODOMETRY_FRAME_OR_QUATERNION_INVALID')
+            self.odom_healthy = False
             return
         yaw = math.atan2(2*(q.w*q.z+q.x*q.y), 1-2*(q.y*q.y+q.z*q.z))
         stamp = msg.header.stamp.sec+msg.header.stamp.nanosec*1e-9
-        self.gate.add(stamp,self._now(),time.monotonic(),msg.header.frame_id,
-                      p.x,p.y,yaw,v.linear.x,v.linear.y,v.angular.z)
+        healthy, moved, why, metrics = self.gate.add(
+            stamp,self._now(),time.monotonic(),msg.header.frame_id,
+            p.x,p.y,yaw,v.linear.x,v.linear.y,v.angular.z)
+        self.odom_healthy = healthy
+        if moved and self.state == 'LOCALIZING_TARGET':
+            self._invalidate_localization('ODOMETRY_MOTION_INTERRUPT', stamp,
+                                          dict(reason=why, metrics=metrics))
 
     def _observation(self, msg):
         if self.state != 'SEARCHING':
@@ -166,14 +179,44 @@ class TargetMissionCoordinator(Node):
                 msg.confidence >= self.config.get('min_confidence',1.) and
                 0 <= self._now()-stamp <= self.age):
             self._state('TARGET_DETECTED')
-            self._stop('TARGET')
+            self._begin_target_localization(stamp)
+
+    def _begin_target_localization(self, observation_stamp):
+        """Start localization immediately while navigation cancellation proceeds."""
+        self.stop_token, self.stop_purpose = str(uuid.uuid4()), 'TARGET'
+        self.deadline = time.monotonic()+self.stop_timeout
+        self.quiet_seen = False
+        self.terminal_seen = False
+        self.not_before = observation_stamp
+        self.report_frames, self.last_report_stamp = 0, 0.
+        self.report_points = []
+        self.pending_report = None
+        self._publish_localization_reset('TARGET_CONFIRMED', observation_stamp)
+        self._state('LOCALIZING_TARGET')
+
+    def _publish_localization_reset(self, reason, not_before):
+        self.localization_reset_count += 1
+        payload = dict(episode_id=self.config.get('episode_id',''),
+                       token=str(uuid.uuid4()), generation=self.localization_reset_count,
+                       reason=reason, not_before=float(not_before), stamp=self._now())
+        self.localization_reset_pub.publish(String(data=json.dumps(payload)))
+
+    def _invalidate_localization(self, reason, not_before, detail=None):
+        """Discard only the current fusion history; remain in localization."""
+        self.not_before = max(self.not_before, float(not_before))
+        self.report_frames, self.last_report_stamp = 0, 0.
+        self.report_points = []
+        self.pending_report = None
+        self._publish_localization_reset(reason, self.not_before)
+        self.diagnostic_pub.publish(String(data=json.dumps(dict(
+            state=self.state, localization_interrupted=reason,
+            detail=detail or {}, stop_token=self.stop_token))))
 
     def _stop(self, purpose):
         # Fresh nonce binds acknowledgement to this stop, not a latched old status.
         self.stop_token, self.stop_purpose = str(uuid.uuid4()), purpose
         self.deadline = time.monotonic()+self.stop_timeout
         self.quiet_seen = False
-        self.gate.clear('WAITING_FOR_NAVIGATION_TERMINAL')
         self._state('STOPPING_FOR_TARGET' if purpose == 'TARGET' else 'STOPPING')
 
     def _quiet_ack(self):
@@ -183,15 +226,18 @@ class TargetMissionCoordinator(Node):
     def _estimate(self, msg):
         if self.state != 'LOCALIZING_TARGET':
             return
-        stable = self.gate.evaluate(self._now(),time.monotonic())[0]
-        if not (self.verified and self.camera_motion_verified and stable and self._quiet_ack()):
+        monitor_healthy = self.gate.evaluate(self._now(),time.monotonic())[0]
+        if not (self.verified and self.camera_motion_verified and
+                self.odom_healthy and monitor_healthy):
             self.report_frames, self.report_points = 0, []
+            self.pending_report = None
             return
         if not estimate_is_reportable(msg,self.config.get('episode_id'),
             self.config.get('class_id'),self.config.get('class_name'),self._now(),
             self.not_before,self.age,self.variance):
             self.report_frames = 0
             self.report_points = []
+            self.pending_report = None
             return
         stamp = msg.header.stamp.sec+msg.header.stamp.nanosec*1e-9
         if stamp <= self.last_report_stamp:
@@ -201,18 +247,38 @@ class TargetMissionCoordinator(Node):
                 math.hypot(point[0]-p[0],point[1]-p[1]) > self.consistency
                 for p in self.report_points)):
             self.report_frames, self.report_points = 0, []
+            self.pending_report = None
         self.last_report_stamp = stamp
         self.report_points.append(point)
         self.report_frames += 1
+        # Localization may converge while cancellation is still in flight, but
+        # final publication remains forbidden until Nav2 confirms a remote
+        # terminal state tied to this stop token.
         if self.report_frames < self.required:
             return
-        msg.reason = 'REPORTED_AFTER_TERMINAL_AND_BOUNDED_BALANCING_WINDOW'
+        self.pending_report = msg
+        if not self._quiet_ack():
+            return
+        self._publish_final(msg)
+
+    def _publish_final(self, msg):
+        monitor_healthy = self.gate.evaluate(self._now(),time.monotonic())[0]
+        if not (self._quiet_ack() and self.verified and
+                self.camera_motion_verified and self.odom_healthy and
+                monitor_healthy and estimate_is_reportable(
+                    msg,self.config.get('episode_id'),self.config.get('class_id'),
+                    self.config.get('class_name'),self._now(),self.not_before,
+                    self.age,self.variance)):
+            return False
+        msg.reason = 'REPORTED_AFTER_TERMINAL_WITH_MOTION_INTERRUPT_MONITOR'
         self.report_pub.publish(msg)
         point = PointStamped()
         point.header, point.point = msg.header, msg.position
         self.point_pub.publish(point)
         self.found_pub.publish(Bool(data=True))
+        self.pending_report = None
         self._state('TARGET_REPORTED')
+        return True
 
     def _tick(self):
         now, steady = self._now(), time.monotonic()
@@ -220,9 +286,11 @@ class TargetMissionCoordinator(Node):
             self._stop('FAULT')
         self.last_clock = now
         self._publish()
-        stable, why, metrics = self.gate.evaluate(now,steady)
+        monitor_healthy, why, metrics = self.gate.evaluate(now,steady)
+        self.odom_healthy = self.odom_healthy and monitor_healthy
         self.diagnostic_pub.publish(String(data=json.dumps(dict(state=self.state,
-            stability_reason=why,stability=metrics,limits_verified=self.verified,
+            motion_monitor_reason=why,motion_monitor=metrics,
+            motion_interrupt_verified=self.verified,odom_healthy=self.odom_healthy,
             camera_motion_tf_verified=self.camera_motion_verified,
             runtime_fresh=self._runtime_fresh(),stop_token=self.stop_token))))
         if self.state == 'SEARCHING':
@@ -238,27 +306,23 @@ class TargetMissionCoordinator(Node):
             if steady >= self.deadline:
                 self._state('STOP_UNVERIFIED')
             elif self._quiet_ack():
-                if not self.quiet_seen:
-                    self.quiet_seen = True
-                    self.gate.clear('COLLECTING_POST_TERMINAL_WINDOW')
-                elif stable and self.verified:
-                    if self.stop_purpose == 'TARGET':
-                        self.not_before = now
-                        self.report_frames, self.last_report_stamp = 0, 0.
-                        self.report_points = []
-                        self.deadline = steady+self.loc_timeout
-                        self._state('LOCALIZING_TARGET')
-                    else:
-                        self._state({'PAUSE':'PAUSED','FINISH':'FINISHED',
-                                     'SEARCH_COMPLETE':'SEARCH_EXHAUSTED',
-                                     'OPERATOR':'OPERATOR_STOPPED',
-                                     'TIMEOUT':'MISSION_TIMEOUT'}.get(self.stop_purpose,'FAULT'))
+                self._state({'PAUSE':'PAUSED','FINISH':'FINISHED',
+                             'SEARCH_COMPLETE':'SEARCH_EXHAUSTED',
+                             'OPERATOR':'OPERATOR_STOPPED',
+                             'TIMEOUT':'MISSION_TIMEOUT'}.get(self.stop_purpose,'FAULT'))
             else:
                 self.quiet_seen = False
         elif self.state == 'LOCALIZING_TARGET':
-            if not self._quiet_ack():
-                self._stop('FAULT')
-            elif steady >= self.deadline:
+            if self._quiet_ack() and not self.terminal_seen:
+                self.terminal_seen = True
+                self.deadline = steady+self.loc_timeout
+                if self.pending_report is not None:
+                    self._publish_final(self.pending_report)
+            elif not self.terminal_seen and steady >= self.deadline:
+                self._state('STOP_UNVERIFIED')
+            elif self.terminal_seen and not self._quiet_ack():
+                self._state('STOP_UNVERIFIED')
+            elif self.terminal_seen and steady >= self.deadline:
                 self._state('LOCALIZATION_FAILED')
         elif self.state == 'TARGET_REPORTED':
             self._state('FINISHED')
@@ -281,12 +345,13 @@ class TargetMissionCoordinator(Node):
 
     def _start_search(self, request, response):
         if (self.state != 'WAIT_FOR_TARGET' or not self._source_ready() or
-                not self.runtime.get('quiescent') or not self.verified):
-            return self._response(response,False,'Require configured fresh detector, robot readiness, verified limits and WAIT_FOR_TARGET')
+                not self.runtime.get('quiescent') or not self.verified or
+                not self.odom_healthy):
+            return self._response(response,False,'Require configured fresh detector, robot readiness, verified motion interrupt monitor and WAIT_FOR_TARGET')
         self.stop_token = ''
         self.search_deadline = time.monotonic()+self.mission_timeout
         self._state('SEARCHING')
-        return self._response(response,True,'Search started with existing motion gate; no extra motion authorization granted')
+        return self._response(response,True,'Search started with motion-interrupt monitoring; no extra motion authorization granted')
 
     def _pause(self, request, response):
         if self.state != 'SEARCHING':

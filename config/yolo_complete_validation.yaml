@@ -16,7 +16,9 @@ target_mission_coordinator:
   ros__parameters:
     odom_topic: /odom
     odom_frame: odom_combined
-    limits_verified: false
+    # Must remain false until the large-motion interrupt thresholds have been
+    # validated on the physical robot.  This is not a stationary/PID gate.
+    motion_interrupt_verified: false
     dynamic_camera_tf_verified: false
     stop_timeout_s: 12.0
     localization_timeout_s: 15.0
@@ -25,16 +27,14 @@ target_mission_coordinator:
     maximum_variance_m2: 0.25
     minimum_report_frames: 3
     report_consistency_m: 0.10
-    stability_window_s: 1.5
-    stability_min_samples: 15
-    stability_max_age_s: 0.3
-    stability_max_gap_s: 0.2
-    stability_max_position_span_m: 0.06
-    stability_max_yaw_span_rad: 0.15
-    stability_max_linear_rms_mps: 0.06
-    stability_max_angular_rms_rps: 0.12
-    stability_max_linear_peak_mps: 0.20
-    stability_max_angular_peak_rps: 0.30
+    # These invalidate accumulated localization observations only when the
+    # robot moves substantially. Normal balancing jitter is intentionally
+    # ignored; no zero-velocity or fixed-duration stillness is required.
+    motion_interrupt_horizon_s: 0.5
+    motion_interrupt_max_age_s: 0.3
+    motion_interrupt_max_gap_s: 0.2
+    motion_interrupt_max_translation_m: 0.15
+    motion_interrupt_max_rotation_rad: 0.35
 
 yolo_detection_adapter:
   ros__parameters:

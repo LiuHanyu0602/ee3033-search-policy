@@ -35,6 +35,7 @@ class StampedTargetLocalizer(Node):
         self.camera = None
         self.last_clock = None
         self.last_calibration_signature = None
+        self.last_reset_token = ''
         self.buffer = Buffer()
         self.listener = TransformListener(self.buffer, self)
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
@@ -42,10 +43,27 @@ class StampedTargetLocalizer(Node):
         self.output = self.create_publisher(TargetEstimate, '/target/estimate_candidate', 10)
         self.status = self.create_publisher(String, '/target/localization_status', latched)
         self.create_subscription(String, '/target/configuration', self._configuration, latched)
+        self.create_subscription(String, '/target/localization_reset', self._reset, latched)
         self.create_subscription(CameraInfo, str(p('camera_info_topic')), self._camera,
             QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))
         self.create_subscription(TargetObservation, '/target/observation', self._observation, 10)
         self.status.publish(String(data='WAITING_FOR_VERIFIED_GEOMETRY'))
+
+    def _reset(self, msg):
+        """Clear fusion history after confirmation or substantial robot motion."""
+        try:
+            d = json.loads(msg.data)
+            token = str(d['token'])
+            if (not token or token == self.last_reset_token or
+                    str(d['episode_id']) != self.memory.episode):
+                return
+            self.last_reset_token = token
+            self.memory.configure(self.memory.episode, self.memory.class_id,
+                                  self.memory.name)
+            self.status.publish(String(data='LOCALIZATION_MEMORY_RESET_'+
+                                       str(d.get('reason','UNSPECIFIED'))))
+        except (ValueError, TypeError, KeyError):
+            self.status.publish(String(data='INVALID_LOCALIZATION_RESET'))
 
     def _configuration(self, msg):
         try:

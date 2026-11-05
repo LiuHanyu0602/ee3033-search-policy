@@ -53,12 +53,16 @@ class TestCompleteMissionProtocol(unittest.TestCase):
         m.gate=Mock()
         m.gate.evaluate.return_value=(True,'BOUNDED',{})
         m.verified=m.camera_motion_verified=True
+        m.odom_healthy=True
+        m.terminal_seen=False
         m._runtime_fresh=lambda: True
         m._source_ready=lambda: True
         m.runtime={}
         m.last_clock=None
         m.quiet_seen=False
         m.diagnostic_pub=Mock()
+        m.localization_reset_pub=Mock()
+        m.localization_reset_count=0
         m.report_pub=Mock()
         m.point_pub=Mock()
         m.found_pub=Mock()
@@ -70,6 +74,7 @@ class TestCompleteMissionProtocol(unittest.TestCase):
         m.required=3
         m.report_frames=0
         m.report_points=[]
+        m.pending_report=None
         m.last_report_stamp=0.
         return m
 
@@ -86,8 +91,9 @@ class TestCompleteMissionProtocol(unittest.TestCase):
     def test_detection_inhibits_before_report(self):
         m=self.mission()
         m._observation(self.observation())
-        self.assertEqual(m.state,'STOPPING_FOR_TARGET')
+        self.assertEqual(m.state,'LOCALIZING_TARGET')
         self.assertTrue(m.stop_token)
+        m.localization_reset_pub.publish.assert_called_once()
         m.report_pub.publish.assert_not_called()
 
     def test_wrong_episode_cannot_stop_search(self):
@@ -100,17 +106,31 @@ class TestCompleteMissionProtocol(unittest.TestCase):
         m._observation(self.observation())
         m.runtime=dict(stop_token='previous',quiescent=True,unknown_terminal=False)
         m._tick()
-        self.assertEqual(m.state,'STOPPING_FOR_TARGET')
+        self.assertEqual(m.state,'LOCALIZING_TARGET')
+        self.assertFalse(m.terminal_seen)
 
     def ready_to_localize(self):
         m=self.mission()
         m._observation(self.observation())
-        m.runtime=dict(stop_token=m.stop_token,quiescent=True,unknown_terminal=False)
-        m._tick()  # Clear window only after matching terminal acknowledgement.
-        self.assertTrue(m.quiet_seen)
-        m._tick()
         self.assertEqual(m.state,'LOCALIZING_TARGET')
+        m.runtime=dict(stop_token=m.stop_token,quiescent=True,unknown_terminal=False)
+        m._tick()
+        self.assertTrue(m.terminal_seen)
         return m
+
+    def test_localization_accumulates_before_terminal_but_does_not_publish(self):
+        m=self.mission()
+        m._observation(self.observation())
+        m.runtime=dict(stop_token='old',quiescent=True,unknown_terminal=False)
+        m._now=lambda: 100.3
+        for ns in (100_000_000,200_000_000,300_000_000):
+            m._estimate(self.estimate(ns))
+        self.assertEqual(m.report_frames,3)
+        m.report_pub.publish.assert_not_called()
+        m.runtime=dict(stop_token=m.stop_token,quiescent=True,unknown_terminal=False)
+        m._tick()
+        m.report_pub.publish.assert_called_once()
+        self.assertEqual(m.state,'TARGET_REPORTED')
 
     def test_full_event_stop_localize_report_finish(self):
         m=self.ready_to_localize()
@@ -123,14 +143,15 @@ class TestCompleteMissionProtocol(unittest.TestCase):
         m._tick()
         self.assertEqual(m.state,'FINISHED')
 
-    def test_unverified_limits_never_advance_to_localization(self):
+    def test_unverified_motion_monitor_blocks_final_report(self):
         m=self.mission()
         m._observation(self.observation())
         m.runtime=dict(stop_token=m.stop_token,quiescent=True,unknown_terminal=False)
         m.verified=False
         m._tick()
-        m._tick()
-        self.assertEqual(m.state,'STOPPING_FOR_TARGET')
+        m._estimate(self.estimate())
+        self.assertEqual(m.state,'LOCALIZING_TARGET')
+        m.report_pub.publish.assert_not_called()
 
     def test_unknown_terminal_times_out_not_success(self):
         m=self.mission()
@@ -163,6 +184,18 @@ class TestCompleteMissionProtocol(unittest.TestCase):
         m._estimate(other)
         self.assertEqual(m.report_frames,1)
         m.report_pub.publish.assert_not_called()
+
+    def test_large_motion_clears_fusion_without_aborting_localization(self):
+        m=self.mission()
+        m._observation(self.observation())
+        m.report_frames=2
+        m.report_points=[(1.,2.)]
+        m._invalidate_localization('ODOMETRY_MOTION_INTERRUPT',100.2)
+        self.assertEqual(m.state,'LOCALIZING_TARGET')
+        self.assertEqual(m.report_frames,0)
+        self.assertEqual(m.report_points,[])
+        self.assertEqual(m.not_before,100.2)
+        self.assertEqual(m.localization_reset_pub.publish.call_count,2)
 
     def test_resume_does_not_create_new_time_budget(self):
         m=self.mission()
