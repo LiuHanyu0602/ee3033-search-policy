@@ -16,7 +16,7 @@ setup(
         ),
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
-        ("share/" + package_name + "/config", glob("config/*.yaml")),
+        ("share/" + package_name + "/config", glob("config/*.yaml") + glob("config/*.json")),
         (
             "share/" + package_name + "/calibration",
             ["results/updated_calibration/calibration.npz"],
