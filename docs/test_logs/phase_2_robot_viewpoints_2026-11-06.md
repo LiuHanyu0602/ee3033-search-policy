@@ -199,3 +199,25 @@ account for body pitch. The `/robot_euler` pitch sign, source-sample
 freshness, timing relative to each image, rotation pivot and full dynamic TF
 remain unverified. These assumptions cannot justify formal target coordinates
 or physical navigation.
+
+An eight-second, non-actuating observation produced 361 distinct Euler
+timestamps, 360 distinct IMU timestamps and 360 timestamp-matched pairs.
+Euler pitch ranged from approximately 0.0155 to 0.0545 rad; the zero-delay
+correlation between adjacent pitch differences per second and IMU y angular
+velocity was approximately -0.317. This weak observational correlation does
+not validate either axis direction, calibration or sensor timing.
+
+The base source checks the serial-frame checksum and returns a new-data flag,
+but its control loop ignores the flag and publishes the retained values with
+the current cycle's ROS timestamp even when no valid frame arrives. The
+inspected receiver does not read a sensor sample counter or timestamp for
+`/robot_euler`; that observation does not establish whether the STM32 protocol
+contains such information. No serial disconnection test was performed.
+
+The operator reported that during normal balancing, without deliberately
+moving the robot, an increasing displayed `/robot_euler` pitch relative to
+the first sample roughly corresponded to the robot's front moving downward.
+This is a qualitative observation consistent with positive pitch about a
+left-pointing y axis; no quantitative visual measurements or output log
+were provided. It does not validate the pitch offset, timing, sensor freshness
+or a full dynamic camera transform.
