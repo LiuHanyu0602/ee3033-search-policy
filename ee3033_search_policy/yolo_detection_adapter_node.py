@@ -88,6 +88,13 @@ class YoloDetectionAdapter(Node):
     def _camera(self, msg):
         try:
             self.calibration.validate_camera_info(msg)
+            if self.camera is not None and msg.header.frame_id != self.camera.header.frame_id:
+                self.session.clear()
+                self.json_input.clear()
+                self.last_frame = ''
+                self._configuration()
+            self.camera = msg
+            self.json_input.record_camera_info(msg, time.monotonic())
         except ValueError as exc:
             self.camera = None
             self.last_frame = ''
@@ -97,12 +104,6 @@ class YoloDetectionAdapter(Node):
             self.get_logger().error('Rejected CameraInfo: ' + str(exc),
                                     throttle_duration_sec=2.0)
             return
-        if self.camera is not None and msg.header.frame_id != self.camera.header.frame_id:
-            self.session.clear()
-            self.json_input.clear()
-            self.last_frame = ''
-            self._configuration()
-        self.camera = msg
 
     def _state(self, msg):
         old_episode = self.session.episode_id

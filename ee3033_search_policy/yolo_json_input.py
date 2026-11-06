@@ -31,17 +31,26 @@ class NcnnJsonInput:
     def clear(self):
         self.images.clear()
 
-    def record_image(self, image, steady_now):
-        stamp = stamp_nanoseconds(image.header.stamp.sec, image.header.stamp.nanosec)
-        if (not image.header.frame_id or image.width <= 0 or image.height <= 0 or
-                image.encoding not in ('rgb8', 'bgr8')):
-            raise ValueError('Expected a named, positive-size rgb8/bgr8 source image')
-        # Retain metadata only, never image buffers; bounded to about two seconds at 30 Hz.
+    def _record_metadata(self, header, width, height, steady_now):
+        stamp = stamp_nanoseconds(header.stamp.sec, header.stamp.nanosec)
+        if not header.frame_id or width <= 0 or height <= 0:
+            raise ValueError('Expected named, positive-size source metadata')
         self.images[stamp] = ImageMetadata(
-            stamp, image.header.frame_id, image.width, image.height, steady_now)
+            stamp, header.frame_id, width, height, steady_now)
         self.images.move_to_end(stamp)
         while len(self.images) > 64:
             self.images.popitem(last=False)
+
+    def record_image(self, image, steady_now):
+        if image.encoding not in ('rgb8', 'bgr8'):
+            raise ValueError('Expected an rgb8/bgr8 source image')
+        # Retain metadata only, never image buffers; bounded to about two seconds at 30 Hz.
+        self._record_metadata(
+            image.header, image.width, image.height, steady_now)
+
+    def record_camera_info(self, camera_info, steady_now):
+        self._record_metadata(
+            camera_info.header, camera_info.width, camera_info.height, steady_now)
 
     def match(self, text, ros_now, steady_now, max_age):
         data = json.loads(text)

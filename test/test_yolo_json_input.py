@@ -32,6 +32,11 @@ def image(sample=LIVE_SAMPLE):
               width=640, height=480, encoding='rgb8')
 
 
+def camera_info(sample=LIVE_SAMPLE):
+    return NS(header=NS(stamp=NS(**sample['timestamp']), frame_id='default_cam'),
+              width=640, height=480)
+
+
 def source_time(sample=LIVE_SAMPLE):
     return sample['timestamp']['sec'] + sample['timestamp']['nanosec']/1e9
 
@@ -68,6 +73,18 @@ def test_no_matching_image_never_borrows_latest_frame(source):
     sample['timestamp']['nanosec'] += 1
     with pytest.raises(ValueError, match='exactly matching'):
         source.match(json.dumps(sample), source_time()+.1, 100.1, .5)
+
+
+def test_matching_camera_info_supplies_exact_source_metadata():
+    source = NcnnJsonInput()
+    source.record_camera_info(camera_info(), 100.)
+    frame, metadata = source.match(
+        json.dumps(LIVE_SAMPLE), source_time()+.1, 100.1, .5)
+    assert frame.frame_id == metadata.frame_id == 'default_cam'
+    assert metadata.stamp_ns == (
+        LIVE_SAMPLE['timestamp']['sec']*1_000_000_000
+        + LIVE_SAMPLE['timestamp']['nanosec'])
+    assert (metadata.width, metadata.height) == (640, 480)
 
 
 @pytest.mark.parametrize('ros_now,steady_now', [
