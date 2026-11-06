@@ -10,9 +10,10 @@
   `593ba719958625eeac5884d98e2c7c76b000170e`.
 - Robot: Raspberry Pi 5, ROS 2 Humble Docker. The base, Nav2, camera and NCNN
   detector were already running; the search manager was not started.
-- Decision: **partial pass only**. Existing unit tests and the snapshot checks
-  passed. Map-update safety and a reusable real-map regression fixture remain
-  unverified. These results do not authorize robot motion.
+- Decision: **operator accepted the fixed-map scope** on 2026-11-06. Existing
+  unit tests, the robot-map snapshot and the development-machine real-map
+  fixture passed. Changed maps received while busy remain a known failure
+  outside this stated scope. These results do not authorize robot motion.
 - Map: `/map` from the previously verified `map_test_1030` map server; its
   YAML and PGM hashes are recorded in the [Phase 0 audit](phase_0_robot_audit_2026-11-06.md).
   The map files remained untracked on the Pi and were not copied or committed.
@@ -175,9 +176,57 @@ If the publisher does not resend that map, the manager may continue using
 the earlier map. This behavior has not been fixed or covered by a map-update
 regression test. The operator chose to defer the issue.
 
-Do not treat this partial record as Phase 2 acceptance or enable physical
-navigation while the map-update, sensor freshness, TF and other documented
-safety blockers remain open. No source changes were made for this phase.
+The initial snapshot was a partial result; the fixed-map scope was accepted
+after the follow-up checks below. Do not enable physical navigation while
+sensor freshness, TF and the other documented safety blockers remain open.
+No runtime-source changes were made for this phase.
+
+## Follow-up caching and tracked-map regressions
+
+The operator authorized the remaining non-actuating checks. On the development
+machine, test cases were added for unchanged-map cache reuse and for idle
+regeneration when map occupancy, origin, yaw or resolution changes. A
+regression test also reads the existing tracked `balance_map_1` YAML and PGM
+without changing them, checks their hashes and verifies candidate geometry.
+When both optional map files are absent, this fixture test reports an explicit
+skip; the Pi's intentional local deletion is not restored.
+
+```bash
+# Development machine, repository root
+python3 -m pytest -q \
+  test/test_map_utils.py test/test_runtime_core.py test/test_search_manager.py
+```
+
+Observed initially: **66 passed in 5.49 s**. After extending the unchanged-map
+test to cover a busy decision and an outstanding navigation request, the same
+command produced **66 passed in 5.13 s**. The test verifies that the unchanged
+map preserves coverage, visit counts, failure counts and the selected index.
+The navigation request is a test double; no Action goal was sent.
+
+The tracked-map fixture is a different map
+from the Pi's `map_test_1030` snapshot: it contains 22,298 free cells, generated
+436 oriented candidates and 22,230 observable cells, and produced minimum
+reported clearance approximately 0.2146 m. Its YAML SHA256 is
+`3abb44528a205eede9f8f003605249bae85bba5b0ee72da478b639f38ff2a42d`
+and PGM SHA256 is
+`dd4bc8600d644bd52817e561d0e4fb7e9947f5700c33f0f0783adf4735984420`.
+No Pi map data was copied.
+
+An additional ROS-free test-double reproduction delivered a changed map
+while the search manager was busy. The existing map signature remained
+unchanged, candidate generation was not called, and the node logged
+`Map update deferred during an active decision`. The check exited with
+`FAIL: changed map discarded during active decision`. This is a confirmed
+test-double failure, not a physical robot test. The requested runtime fix
+remains deferred; the unchanged-map passing tests do not cover or resolve it.
+
+The operator states that the course procedure uses a fixed map during search
+and chose to record this assumption rather than change runtime code. This is
+an operational assumption, not a verified map-freshness guarantee: the
+current node does not enforce that the map stays fixed or reliably retain a
+changed map received while busy. If that assumption is violated, the old map
+may still be used. No physical-navigation or full-search acceptance follows
+from this assumption.
 
 ## Provisional camera geometry for later work
 

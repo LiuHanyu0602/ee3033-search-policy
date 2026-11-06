@@ -95,6 +95,74 @@ def manager(api):
     return node
 
 
+@pytest.mark.parametrize("change", ["cell", "origin", "yaw", "resolution"])
+def test_idle_map_cache_reuses_unchanged_map_and_rebuilds_on_change(
+    api, manager, monkeypatch, change,
+):
+    class Candidates:
+        observable_mask = np.ones((2, 2), dtype=bool)
+
+        def __len__(self):
+            return 4
+
+    generate = Mock(return_value=Candidates())
+    monkeypatch.setattr(api, "generate_viewpoints_from_grid", generate)
+    manager.map_signature = None
+    manager.spacing, manager.clearance = 0.75, 0.20
+    manager.camera_fov, manager.camera_range, manager.heading_count = 70.0, 3.0, 4
+    manager.free_threshold, manager.occupied_threshold = 20, 65
+    message = NS(
+        data=[0, 0, 0, 0],
+        info=NS(
+            width=2, height=2, resolution=0.05,
+            origin=NS(
+                position=NS(x=0.0, y=0.0, z=0.0),
+                orientation=NS(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
+    )
+
+    manager._map_cb(message)
+    assert generate.call_count == 1
+    initial_memory = manager.memory
+    initial_memory.mark_observation_complete(
+        0, np.array([[True, False], [False, False]]),
+    )
+    manager.failure_counts[0] = 1
+    manager.selected_index = 1
+    manager._map_cb(message)
+    assert generate.call_count == 1
+    assert manager.memory is initial_memory
+
+    manager.busy = True
+    manager._map_cb(message)
+    manager.busy = False
+    manager.active_navigation = NS()
+    manager._map_cb(message)
+    manager.active_navigation = None
+    assert generate.call_count == 1
+    assert manager.memory is initial_memory
+    assert initial_memory.visit_counts.tolist() == [1, 0, 0, 0]
+    assert initial_memory.searched_mask.tolist() == [[True, False], [False, False]]
+    assert manager.failure_counts.tolist() == [1, 0, 0, 0]
+    assert manager.selected_index == 1
+    manager.selected_index = None
+
+    if change == "cell":
+        message.data[-1] = 100
+    elif change == "origin":
+        message.info.origin.position.x = 0.05
+    elif change == "yaw":
+        message.info.origin.orientation.z = np.sin(np.pi / 4)
+        message.info.origin.orientation.w = np.cos(np.pi / 4)
+    else:
+        message.info.resolution = 0.1
+    manager._map_cb(message)
+    assert generate.call_count == 2
+    assert manager.memory is not initial_memory
+    manager._status.assert_called_with("READY")
+
+
 @pytest.mark.parametrize("x,y", [
     (-0.1, 1.0), (10.0, 1.0), (1.0, -0.1), (1.0, 10.0),
     (float("nan"), 1.0), (1.0, float("inf")),

@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -8,7 +9,7 @@ from ee3033_search_policy.feature_builder import (
     build_candidate_features,
     make_shortlist,
 )
-from ee3033_search_policy.map_utils import GridGeometry
+from ee3033_search_policy.map_utils import GridGeometry, classify_cells, world_to_grid
 from ee3033_search_policy.policy_decision import select_with_fallback
 from ee3033_search_policy.runtime_viewpoints import (
     generate_viewpoints_from_grid,
@@ -39,6 +40,49 @@ def test_runtime_viewpoints_have_four_orientations_and_world_yaw():
     assert np.all(result.clearance_m >= 0.15)
     assert result.headings[0] == pytest.approx(np.pi / 2)
     assert np.any(result.observable_mask)
+
+
+def test_runtime_viewpoints_on_tracked_real_map_fixture():
+    root = Path(__file__).resolve().parents[1]
+    yaml_path = root / "maps" / "balance_map_1.yaml"
+    image_path = root / "maps" / "balance_map_1.pgm"
+    if not yaml_path.exists() and not image_path.exists():
+        pytest.skip("Optional tracked real-map fixture is absent from this workspace")
+    assert yaml_path.is_file() and image_path.is_file(), "Real-map fixture is incomplete"
+    yaml_bytes, image_bytes = yaml_path.read_bytes(), image_path.read_bytes()
+    assert hashlib.sha256(yaml_bytes).hexdigest() == (
+        "3abb44528a205eede9f8f003605249bae85bba5b0ee72da478b639f38ff2a42d"
+    )
+    assert hashlib.sha256(image_bytes).hexdigest() == (
+        "dd4bc8600d644bd52817e561d0e4fb7e9947f5700c33f0f0783adf4735984420"
+    )
+    header = b"P5\n142 160\n255\n"
+    assert image_bytes.startswith(header)
+    image = np.frombuffer(image_bytes[len(header):], dtype=np.uint8).reshape(160, 142)
+    probability = (255.0 - image.astype(float)) / 255.0
+    values = np.flipud(np.where(
+        probability > 0.65, 100, np.where(probability < 0.25, 0, -1),
+    )).astype(np.int8)
+    geometry = GridGeometry(142, 160, 0.05, -5.85, -5.49, 0.0)
+    free, _, _ = classify_cells(values)
+    result = generate_viewpoints_from_grid(values, geometry)
+
+    assert np.count_nonzero(free) == 22298
+    assert len(result) == 436
+    assert np.count_nonzero(result.observable_mask) == 22230
+    assert np.all(free[result.rows, result.cols])
+    assert np.all(result.clearance_m >= 0.20)
+    assert not np.any(result.visibility_masks & ~free)
+    assert np.array_equal(
+        result.observable_mask, np.any(result.visibility_masks, axis=0) & free,
+    )
+    np.testing.assert_allclose(
+        result.visible_areas_m2,
+        result.visibility_masks.sum(axis=(1, 2)) * geometry.resolution ** 2,
+        rtol=1e-5, atol=1e-6,
+    )
+    for row, col, x, y in zip(result.rows, result.cols, result.world_x, result.world_y):
+        assert world_to_grid(float(x), float(y), geometry) == (int(row), int(col))
 
 
 def test_coverage_updates_only_after_completed_observation(tmp_path):
