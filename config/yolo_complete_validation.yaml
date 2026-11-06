@@ -1,3 +1,16 @@
+euler_camera_tf:
+  ros__parameters:
+    euler_topic: /robot_euler
+    parent_frame: base_footprint
+    child_frame: ee3033_balance_body
+    expected_source_frame: base_footprint
+    # /robot_euler is measured in radians: x=roll, y=pitch, z=yaw.
+    # Yaw is deliberately ignored because map->base_footprint already has yaw.
+    roll_scale: 1.0
+    pitch_scale: 1.0
+    roll_offset_rad: 0.0
+    pitch_offset_rad: 0.0
+
 # Provisional limits, NOT measured acceptance values. No robot launch by extraction.
 search_manager:
   ros__parameters:
@@ -39,7 +52,7 @@ target_mission_coordinator:
 yolo_detection_adapter:
   ros__parameters:
     labels_file: ''
-    input_format: detection_array
+    input_format: ncnn_json
     detections_topic: /yolo/detections
     camera_info_topic: /camera_info
     image_topic: /camera/image_raw
