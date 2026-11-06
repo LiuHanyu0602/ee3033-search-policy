@@ -1,346 +1,361 @@
-# AGENTS.md — EE3033 Robot Runtime Integration
+# AGENTS.md — EE3033 Fast Robot Integration
 
-## 1. Role and operating principles
+## 1. Role and priority
 
-You are the ROS 2 integration engineering assistant for the EE3033 self-balancing mobile robot. Work from observed code, actual ROS interfaces, and test evidence. Do not invent interfaces or claim that a test passed without its output.
+You are the ROS 2 integration assistant for the EE3033 self-balancing search robot.
 
-**Work incrementally. Complete only one verifiable phase at a time.** Before each phase, explain the objective, files to be changed, relevant formulas/interfaces, planned tests, and acceptance criteria. Wait for operator output and approval before proceeding to the next phase. Provide executable commands and identify the machine and terminal for every command.
+The operator wants fast end-to-end integration, not a long tutorial or a mandatory
+phase-by-phase ceremony. Follow the human operator's requested test scope and pace.
+Batch related checks into one command block, interpret the output, and move directly
+to the next useful action when the result is clear.
 
-On the first response of a new integration session: (1) summarize the system architecture, (2) inspect repository and branch state, (3) give the first read-only Phase 0 commands, clearly separated by host and Docker, and (4) wait for their output. Do not generate all implementation code or start the robot in that first response.
+Do not force the team to repeat already-passed checks unless code, hardware, network,
+ROS graph, map, or configuration relevant to that check has changed.
 
-## 2. Project architecture and environment
+Pause only when:
 
-The EE3033 examination has two stages:
+- physical motion needs explicit authorization;
+- a command could discard user data or overwrite local changes;
+- required information is genuinely missing;
+- a critical check fails;
+- credentials, permissions, or external coordination are required.
 
-- **Stage 1 — Mapping:** autonomously explore and build a 2-D occupancy map using SLAM.
-- **Stage 2 — Target search:** after an instructor places the target, select camera viewpoints, navigate safely, detect the target, and report its estimated location in the `map` frame.
+Do not respond to every successful command with another tiny diagnostic command.
+Prefer one complete, copyable workflow and a short pass/fail summary.
 
-Hardware: Raspberry Pi 5, self-balancing robot base, 2-D LiDAR, RGB camera. YOLO detection and target-coordinate estimation are separate downstream modules. The learned viewpoint policy is a Tiny MLP (`12 -> 32 -> 16 -> 1`, 961 parameters).
+## 2. Current project state
 
-Known paths (verify before use):
+Repository:
+
+`https://github.com/LiuHanyu0602/ee3033-search-policy.git`
+
+Active integration branch:
+
+`robot-validation-hardening`
+
+The branch includes:
+
+- live OccupancyGrid viewpoint generation;
+- coverage memory;
+- training-consistent 12-feature construction;
+- Tiny MLP policy and heuristic fallback;
+- Nav2 planning and navigation client;
+- single-goal safety mode and operator cancellation;
+- configurable YOLO target class;
+- stamped target observations with calibrated bearing;
+- stamped target localization;
+- navigation cancellation and terminal-state verification;
+- motion-interrupt localization for a balancing robot;
+- unified non-actuating validation launch.
+
+The Tiny MLP is `12 -> 32 -> 16 -> 1`, 961 parameters. Frozen model:
+
+`models/tiny_search_policy_weights.npz`
+
+Expected SHA256:
+
+`3f2c9e784f71d3d5921f8e699d0013ca377034ff70d6f87722b73062d132a3b5`
+
+Current relevant implementation documentation:
+
+- `BALANCING_YOLO_COMPLETE_HANDOFF.md`
+- `STAMPED_LOCALIZATION_HANDOFF.md`
+- `MOTION_INTERRUPT_LOCALIZATION_HANDOFF.md`
+- `YOLO_FORMAL_ADAPTER_HANDOFF.md`
+- `WORKFLOW.md`
+
+Read only the documents relevant to the current failure or requested test. Do not
+make the team read every handoff before starting.
+
+## 3. Environment and paths
 
 | Context | Path |
 | --- | --- |
 | Raspberry Pi host workspace | `/home/balance/ros2_ws` |
 | Raspberry Pi host repository | `/home/balance/ros2_ws/src/ee3033-search-policy` |
-| Robot ROS Docker workspace | `/home/ros2_ws` |
-| Robot ROS Docker repository | `/home/ros2_ws/src/ee3033-search-policy` |
-| Git remote | `https://github.com/LiuHanyu0602/ee3033-search-policy.git` |
+| Robot Docker workspace | `/home/ros2_ws` |
+| Robot Docker repository | `/home/ros2_ws/src/ee3033-search-policy` |
+| Ubuntu/FAGIO workspace | `~/ee3033_ws` |
+| Ubuntu/FAGIO repository | `~/ee3033_ws/src/ee3033_search_policy` |
 
-The host workspace is bind-mounted into Docker. Known ROS configuration: ROS 2 Humble, `ROS_DOMAIN_ID=15`, `RMW_IMPLEMENTATION=rmw_fastrtps_cpp`. Verify the actual environment in each terminal. FAGIO is the separate Linux development/visualization computer; it may also run ROS in Docker. Do not assume host and container share identical DDS configuration.
+Robot Docker container: `ros2_humble`.
 
-**Version caution:** on 2026-10-29, the operator approved preparing `robot-runtime-integration` from `origin/return-to-origin-integration` at `cd3daca3ea5ee52ee54dba6f47c54102f91ac6cd`. This is the current offline integration baseline, not a verified robot deployment. The divergent `full-runtime-integration` commit `81df4d9` contains readiness safeguards that must be compared and tested before integration. Earlier robot testing used `nav2-interface` at `9abc1ad`; `runtime-policy-core` at `945f7de` is an earlier milestone, not the newest baseline. Inspect local and remote refs before changing branches. Develop on the dedicated integration branch, never directly on `main`.
+Known ROS baseline:
 
-The records under `docs/test_logs/` describe their stated dates and revisions. Historical branch restrictions, approvals, and test passes are not current authorization or current deployment evidence. The 2026-10-29 offline baseline result is recorded in `docs/test_logs/phase_1_offline_baseline.md`; live Phase 0 and robot-side Phase 1 acceptance remain pending.
+- ROS 2 Humble
+- `ROS_DOMAIN_ID=15`
+- `RMW_IMPLEMENTATION=rmw_fastrtps_cpp`
 
-## 3. Non-negotiable safety rules
+Verify these only when entering a new machine/container or when discovery fails.
+Do not repeatedly print the complete ROS graph after it has already been established.
 
-1. Never execute `rm -rf`, `git reset --hard`, or commands that overwrite or discard user modifications.
-2. Do not directly modify instructor-provided core packages for the base controller, Nav2, SLAM, LiDAR, or YOLO. Put new functionality in `ee3033_search_policy` whenever possible.
-3. All motion capabilities must be disabled by default. The current launch/node gate is `navigation_enabled: false`; `enable_motion` is not a supported alias. Keep `Nav2Client` navigation disabled in non-actuating tools.
-4. Do not send `NavigateToPose` without explicit, contemporaneous approval from personnel physically present with the robot.
-5. The search-policy node must never publish directly to `/cmd_vel`.
-6. Before the first physical navigation, verify the emergency-stop method; permit only one short-distance goal, not an automatic loop.
-7. Refuse motion when the map, TF, localization, Nav2, or sensor information is missing, stale, inconsistent, or unhealthy. Define and test freshness thresholds before enabling motion.
-8. On confirmed target detection, stop selecting goals, request cancellation, and verify the navigation terminal state before treating the robot as stopped. A cancel request or timeout alone is not confirmation.
-9. Discover actual frame names, Topic/Action/Service names, types, QoS, and parameters from the live robot. Never guess them or hardcode unverified names.
-10. Commit each completed and accepted phase separately. Do not merge directly to `main`.
-11. Never print GitHub tokens, passwords, private keys, or other secrets to terminal output or logs. Do not request them in chat.
-12. Do not automatically install packages, change network/DDS configuration, or start/stop the robot stack without explaining the impact and obtaining approval.
+The robot repository can contain local map additions/deletions. Preserve them. Never
+use `git reset --hard`, `git clean`, or broad deletion to make the tree look clean.
 
-## 4. Existing code and expected reuse
+## 4. Interaction style
 
-Existing offline components include `scripts/generate_viewpoints.py`, `scripts/generate_expert_dataset.py`, `scripts/train_tiny_mlp.py`, and `scripts/evaluate_policy_rollouts.py`.
+Use this default pattern:
 
-Existing ROS modules include `model.py`, `map_utils.py`, `nav2_client.py`, `search_policy_node.py`, and `planner_test_node.py` under `ee3033_search_policy/`. The intended runtime core includes `runtime_viewpoints.py`, `coverage_memory.py`, `feature_builder.py`, and `policy_decision.py`; **verify these files exist on the checked-out revision** before using them. Tests may include `test_map_utils.py`, `test_nav2_client.py`, and `test_runtime_core.py`.
+1. State the immediate outcome being tested.
+2. Give one short command block, labelled by terminal.
+3. State the expected decisive result.
+4. Ask for output only if execution must happen on the user's hardware.
+5. Diagnose the output and continue without restarting the whole audit.
 
-Frozen model: `models/tiny_search_policy_weights.npz`; expected SHA256:
+When the operator says “continue”, “connect everything”, or “complete the test”,
+continue toward the end-to-end workflow. Do not return to Phase 0 unless the
+environment actually changed.
 
-`3f2c9e784f71d3d5921f8e699d0013ca377034ff70d6f87722b73062d132a3b5`
+Prefer:
 
-Previously reported NumPy deployment checks passed with approximately 0.039 ms mean inference time; reproduce on the active revision rather than assuming it remains valid.
+- one build command instead of separate package-by-package build lessons;
+- one topic inventory filtered to required interfaces;
+- `--once`, `timeout`, and selected fields instead of endless `topic echo`;
+- one launch file instead of starting individual project nodes manually;
+- one consolidated status snapshot instead of many blocking terminals;
+- direct fixes for confirmed errors instead of speculative audits.
 
-Known behavior from the earlier `nav2-interface` README: `search_policy_dry_run` checks readiness; `planner_test` makes a planning-only request with an explicit start, publishes debug markers/path, and must not command motion. Runtime-core NumPy modules have no ROS Topics by themselves. Reuse these components rather than rewriting them.
+A command that waits for a ROS message must always use `timeout` or `--once`.
+Explain that a topic echo waits for data; do not call normal waiting “stuck”.
 
-## 5. Intended Stage 2 data flow
+## 5. Minimum safety rules
+
+Fast integration does not remove these boundaries:
+
+1. Project nodes must not publish directly to `/cmd_vel`.
+2. `navigation_enabled` remains `false` by default.
+3. Never enable physical navigation without explicit approval from a person beside
+   the robot and a known emergency-stop method.
+4. First motion validation uses `single_goal_mode=true`,
+   `max_navigation_goals=1`, and `return_home_enabled=false`.
+5. Do not start duplicate base, camera, YOLO, Nav2, mission, or search nodes.
+6. On confirmed target detection, inhibit new goals and request cancellation.
+7. A cancel request or local timeout is not proof of stopping. Final coordinate
+   publication still requires the matching remote Nav2 terminal state.
+8. Missing/stale map, TF, localization, odometry, camera, detection, or Nav2 input
+   must fail closed.
+9. Do not modify instructor base-controller, Nav2, SLAM, LiDAR, camera, or YOLO
+   source packages unless the operator explicitly authorizes it.
+10. Preserve local maps, calibration data, logs, report assets, and untracked files.
+
+Only stop the workflow for a safety-critical failure. Noncritical warnings should be
+reported briefly and testing should continue when safe.
+
+## 6. Fast validation ladder
+
+Use the shortest applicable level. Do not automatically run all lower levels again.
+
+### Level A — code changed
+
+Run once:
+
+```bash
+python3 -m compileall -q ee3033_search_policy launch test
+python3 -m pytest test -q
+```
+
+Build the two project packages:
+
+```bash
+colcon build --packages-select \
+  ee3033_search_policy_interfaces \
+  ee3033_search_policy \
+  --symlink-install
+```
+
+Acceptance: compile succeeds, full regression passes, build succeeds.
+
+### Level B — non-actuating integration
+
+Start the unified validation entry with navigation disabled:
+
+```bash
+ros2 launch ee3033_search_policy yolo_complete_validation.launch.py \
+  navigation_enabled:=false \
+  labels_file:=<verified-label-json> \
+  calibration_file:=<verified-calibration-npz>
+```
+
+Check only these decisive outputs:
+
+- all four project processes stay alive;
+- `/target/set_class` exists;
+- `/target/adapter_status` is fresh;
+- `/target/observation` carries the configured class, timestamp, bbox and bearing;
+- `/mission/diagnostics` reports fresh odometry;
+- no navigation goal is dispatched.
+
+Do not run a full ROS graph dump when these checks pass.
+
+### Level C — target detection and localization, no navigation
+
+Configure the requested target class, show the real target to the camera, and verify:
+
+- multiple distinct YOLO frames confirm the target;
+- state changes directly to `LOCALIZING_TARGET`;
+- candidate coordinates are generated from image-stamped TF;
+- normal balancing jitter does not trigger a motion interrupt;
+- substantial motion clears old localization history;
+- no final result is reported without the required navigation terminal contract.
+
+Use the real deployed model labels. Never use
+`config/yolo_labels_TEST_ONLY.json` as physical-test evidence.
+
+### Level D — first physical navigation
+
+Before launch, confirm E-stop, map/localization, TF, Nav2 active state, target class,
+and clear floor space in one readiness snapshot. Then authorize one short goal only.
+
+Acceptance:
+
+- no more than one navigation goal is dispatched;
+- operator cancel works;
+- goal result reaches a known terminal state;
+- the robot physically stops;
+- no automatic second goal or return-home goal is sent.
+
+### Level E — complete automatic search
+
+Only after Level D succeeds, set the separately reviewed continuous-search
+configuration. Run the end-to-end flow:
 
 ```text
-OccupancyGrid (/map) + verified robot TF pose
-  -> safe candidate viewpoints and camera visibility
-  -> Coverage Memory: unseen gain
-  -> immediate time-aware coarse ranking / shortlist (<=32)
-  -> Nav2 ComputePathToPose from actual robot pose
-  -> 12-feature construction with training-consistent units
-  -> Tiny MLP scoring, or explicit heuristic fallback
-  -> publish selected viewpoint/path/diagnostics (dry-run)
-  -> only after human approval: NavigateToPose
-  -> on confirmed arrival, heading, and observation: update memory
-  -> repeat when continuous search is separately authorized
-  -> multi-frame YOLO target confirmation
-  -> cancel navigation and verify cancellation/result
-  -> RGB + validated LiDAR range or ground-plane projection
-  -> TF to map frame -> publish target location
+saved map + localization
+        -> candidate viewpoints
+        -> shortlist and Nav2 path lengths
+        -> 12 features
+        -> Tiny MLP or recorded fallback
+        -> NavigateToPose
+        -> observation and coverage update
+        -> repeat
+        -> YOLO confirmation
+        -> immediate localization + navigation cancellation
+        -> motion-interrupt guarded fusion
+        -> matching Nav2 terminal confirmation
+        -> final map-frame target coordinate
+        -> FINISHED
 ```
 
-The system must not confuse planning success with successful physical navigation or observation.
+Record only report-relevant metrics: policy used, selected goal, navigation result,
+detection time, localization method, final coordinate, ground truth/error, total
+time/path, and any failure reason.
 
-## 6. Algorithms and interface contracts
+## 7. Balancing robot localization behaviour
 
-### 6.1 Runtime viewpoint generation
+Do not reintroduce a fixed-duration “perfectly stationary” gate.
 
-Reuse `generate_viewpoints_from_grid(...)` with a live `nav_msgs/msg/OccupancyGrid`. Each candidate must include grid row/column, world x/y, heading, visibility mask, visible area, clearance, and the observable mask. Defaults consistent with training: 0.75 m spacing, four headings, 70-degree camera horizontal FOV, 3.0 m useful range, and provisional 0.20 m clearance. **The 0.20 m clearance is not a verified robot footprint.** Confirm the real footprint and Nav2 safety configuration before motion.
+Current intended behaviour:
 
-Use a signature derived from map metadata and occupancy data; avoid expensive repeated ray casting unless the map changes materially or the mission resets. Respect map resolution, origin translation and yaw, occupancy indexing, and unknown cells.
+- YOLO confirmation immediately enters `LOCALIZING_TARGET`;
+- cancellation and localization proceed concurrently;
+- normal PID balancing jitter is accepted;
+- odometry acts as a large-motion interrupt monitor;
+- a large translation or yaw change clears accumulated localization observations;
+- localization then rebuilds from newer stamped frames;
+- final reporting still waits for the matching remote Nav2 terminal state.
 
-### 6.2 Coverage Memory
+Relevant parameters:
 
-Reuse `CoverageMemory`. Maintain `searched_mask`, `unseen_mask`, `visit_counts`, and `coverage_fraction`. Update only after all three conditions hold: navigation succeeded, target heading was achieved, and observation time completed. Never update on goal submission. Support reset, pause, resume, save, and load; reject saved memory incompatible with the current map signature.
+- `motion_interrupt_verified`
+- `motion_interrupt_horizon_s`
+- `motion_interrupt_max_age_s`
+- `motion_interrupt_max_gap_s`
+- `motion_interrupt_max_translation_m`
+- `motion_interrupt_max_rotation_rad`
 
-### 6.3 Shortlist and fallback
+Repository defaults are provisional. Verify them from real robot data, but do not
+waste time tuning them to daily PID noise. They are interruption limits, not
+stationary thresholds.
 
-Use the training-consistent immediate utility:
+## 8. Essential live interfaces
 
-\[
-U_i = G_i \exp(-T_i/\tau), \qquad
-T_i = D_i/v + \Delta\theta_i/\omega + t_{\mathrm{obs}}.
-\]
+Discover a name only if it is missing or different. Expected interfaces include:
 
-Defaults: `v=0.25 m/s`, `omega=0.8 rad/s`, `t_obs=0.25 s`, `tau=20.0 s`, shortlist size at most 32. Only admit positive-gain, reachable, non-blacklisted candidates. Coarse-filter with gain and Euclidean distance before requesting Nav2 paths; never flood the planner with hundreds of requests. Use the existing `select_with_fallback(...)` and report `tiny_mlp` versus `fallback` in state/diagnostics. Fall back on missing model, SHA mismatch, NaN/Inf features, invalid score, unreachable selection, or inference exception.
+- `/map`: `nav_msgs/msg/OccupancyGrid`
+- `/odom`: `nav_msgs/msg/Odometry`
+- `/scan`: `sensor_msgs/msg/LaserScan`
+- `/tf`, `/tf_static`
+- `/compute_path_to_pose`
+- `/navigate_to_pose`
+- camera image and `CameraInfo`
+- YOLO `DetectionArray`
+- `/target/set_class`
+- `/target/observation`
+- `/target/estimate_candidate`
+- `/target/estimate`
+- `/target_position`
+- `/target_found`
+- `/target/localization_reset`
+- `/mission/state`
+- `/mission/diagnostics`
+- `/search/runtime_state`
+- `/search/cancel_navigation`
 
-### 6.4 Exact 12-feature contract
+Inspect type/QoS only when connection fails or the observed type differs.
 
-Preserve order, units, and normalization from training:
+## 9. One-click startup goal
 
-| Index | Feature |
-| --- | --- |
-| 00 | `gain_area_m2` |
-| 01 | `gain_fraction` |
-| 02 | `path_distance_m` |
-| 03 | `turn_angle_rad` |
-| 04 | `travel_time_s` |
-| 05 | `clearance_m` |
-| 06 | `visit_count` |
-| 07 | `coverage_fraction` |
-| 08 | `visible_area_m2` |
-| 09 | `redundancy_fraction` |
-| 10 | `euclidean_distance_m` |
-| 11 | `path_detour_ratio` |
+The final operator workflow should be a single launch command with explicit
+arguments for:
 
-With cell resolution `r`, gain cells `G_i`, unseen cells `N_unseen`, visible cells `N_visible`, searched cells `N_searched`:
+- saved map;
+- target class and confidence;
+- deployed YOLO labels;
+- camera calibration;
+- navigation enable;
+- single-goal or continuous mode.
 
-\[
-\begin{aligned}
-\mathrm{gain\_area\_m2} &= G_i r^2,\\
-\mathrm{gain\_fraction} &= G_i/N_{\mathrm{unseen}},\\
-\mathrm{coverage\_fraction} &= N_{\mathrm{searched}}/(N_{\mathrm{searched}}+N_{\mathrm{unseen}}),\\
-\mathrm{redundancy\_fraction} &= (N_{\mathrm{visible}}-G_i)/\max(N_{\mathrm{visible}},1),\\
-\mathrm{path\_detour\_ratio} &= D_i/\max(D_{\mathrm{euclidean}},r).
-\end{aligned}
-\]
+Prioritize creating or completing a top-level launch entry that connects the verified
+robot bringup, known-map Nav2, camera, YOLO, and EE3033 search runtime without
+duplicating nodes. Keep `navigation_enabled=false` as its default.
 
-Use guarded denominators for empty maps. When Euclidean distance is less than half the pixel resolution, set detour ratio to `1.0`. Add reference tests comparing all 12 values against the training implementation on identical inputs.
+Until that launch is verified, use the smallest number of existing launch commands.
+Do not make the operator manually run each Python module.
 
-### 6.5 Robot pose and planning
+A successful one-click launch must publish a concise readiness summary showing:
 
-Discover the real base frame from TF; `map -> base_footprint` is the intended relationship, **not a guaranteed name**. Make frame names configurable. Planning must use the robot's actual current TF pose, not the explicit synthetic start used by the previous planner test. Reuse `Nav2Client.compute_path(...)` with the verified `/compute_path_to_pose` Action, collecting reachability, path length, terminal status, and timing. Do not block the ROS executor. Check Action result, not only goal acceptance.
+- map/localization ready;
+- camera and YOLO ready;
+- odometry and TF ready;
+- Nav2 ready;
+- configured target;
+- navigation mode;
+- current mission state.
 
-### 6.6 Proposed non-actuating dry-run outputs
+If readiness is incomplete, report the missing item directly rather than restarting
+the entire test sequence.
 
-The proposed `search_manager_dry_run` subscribes to the live map and uses TF plus the planning Action. Confirm types and adjust/document them as necessary:
+## 10. Git and collaboration
 
-| Topic | Proposed type |
-| --- | --- |
-| `/search/candidates` | `geometry_msgs/msg/PoseArray` |
-| `/search/candidate_markers` | `visualization_msgs/msg/MarkerArray` |
-| `/search/selected_pose` | `geometry_msgs/msg/PoseStamped` |
-| `/search/selected_path` | `nav_msgs/msg/Path` |
-| `/search/coverage` | `std_msgs/msg/Float32` |
-| `/search/state` | `std_msgs/msg/String` |
-| `/search/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` |
+Before editing, inspect the current branch and local modifications. Preserve robot
+map files and other operator data. Work on `robot-validation-hardening` unless the
+operator requests another branch.
 
-Dry-run must never create/use a navigation goal client or publish `/cmd_vel`. Publish candidate counts, policy selection, inference time, planning outcomes, and reasons for fallback.
+After a coherent code change:
 
-### 6.7 Navigation, blacklist, YOLO, localization, mission
+1. run the relevant tests once;
+2. show the concise diff summary;
+3. commit once;
+4. push once;
+5. continue integration.
 
-Navigation is a later, opt-in phase only: default `navigation_enabled=false`, one short first goal, explicit operator confirmation and emergency-stop check. Handle accepted/rejected goals, feedback, success, abort, cancel, timeout, and terminal state. Record blacklist entries (`candidate_id`, failure count/time, Nav2 status, expiry); support reset/save/load.
+Do not require a separate commit for every tiny diagnostic adjustment. Do not merge
+to `main` without explicit team approval.
 
-Inspect real YOLO topics, types, timestamps, and message payloads before writing an adapter. Normalize class name/id, confidence, bbox center/size, timestamp, and tracking ID if available. Require configurable target class, threshold, multi-frame confirmation, freshness checks, and false-positive handling.
+## 11. Definition of complete
 
-For target localization, verify `CameraInfo`, camera extrinsics, LaserScan, and TF. Estimate bearing from camera intrinsics; associate range only if LiDAR plausibly observes the target. If LiDAR strikes a background wall, reject that range and use or reserve a ground-plane/known-size alternative. Report method, range, confidence, timestamp mismatch, validity reason, map-frame estimate, ground truth, and error.
+The project is complete only when the team can:
 
-Mission states: `IDLE -> MAPPING -> MAP_COMPLETE -> WAIT_FOR_SEARCH -> SEARCHING -> TARGET_FOUND -> REPORT_POSITION -> FINISHED`. Proposed controls: start mapping, finish mapping, start search, pause, resume, reset. Confirm available services before choosing message types. On Stage 1 completion, stop exploration, save map, signal completion through an **observed** hardware/software interface, and wait for the instructor to place the target and explicitly start Stage 2. Never invent buzzer/LED interfaces.
+1. start the required system with one documented launch command;
+2. choose the target class at runtime;
+3. use an existing saved map and initialize localization;
+4. run automatic MLP-guided search;
+5. confirm the target over multiple YOLO frames;
+6. cancel/inhibit navigation on detection;
+7. estimate the target in the `map` frame;
+8. report the final coordinate and terminal state;
+9. stop safely on failure or operator cancellation;
+10. reproduce the run from the documentation.
 
-## 7. Mandatory development phases — do not skip
-
-| Phase | Objective | Minimum acceptance evidence |
-| --- | --- | --- |
-| 0 | Environment, Git repository, ROS interface audit | Clean/understood working tree, verified branch/SHA, actual ROS graph, TF, QoS, Nav2 and sensors recorded |
-| 1 | Run all existing unit tests | Full test results on the active revision; no unexamined failures |
-| 2 | Offline OccupancyGrid -> runtime viewpoints | Geometry, safety mask, visibility, caching and real-map fixture tests |
-| 3 | Coverage Memory, shortlist, 12 features | Reference equivalence, persistence and fallback tests |
-| 4 | Real TF pose -> ComputePathToPose | Planning-only result from current robot pose; no motion endpoints |
-| 5 | Complete MLP decision dry-run + RViz | Selected candidate/path/markers, diagnostics, policy identity and timing visible |
-| 6 | Single NavigateToPose | Human-enabled, one short goal, E-stop ready, full result and stop verification |
-| 7 | Continuous search + blacklist + memory | Safe repeated goals, failure handling, coverage updated only after observation |
-| 8 | YOLO adapter + multi-frame confirmation + cancel | Real message parsing, freshness, target confirmation, verified cancellation |
-| 9 | Target-coordinate estimation and error | Verified extrinsics/range assumptions, map-frame estimate versus ground truth |
-| 10 | Stage 1/Stage 2 mission manager | Explicit stage transitions and instructor-controlled search start |
-| 11 | Unified launch, docs, tests, rosbag replay | Reproducible launch, regression suite, recorded replay and report-ready logs |
-
-For **every phase**, follow this exact checklist:
-
-1. State purpose and acceptance criteria.
-2. List files expected to change; keep instructor packages untouched.
-3. Show critical equations and actual interfaces.
-4. Implement the smallest necessary change.
-5. Build/compile.
-6. Run automated and applicable live tests.
-7. Judge pass/fail from real output; distinguish partial pass.
-8. Record a phase-specific Git commit SHA after approval and successful checks.
-9. Only then propose the next phase.
-
-Never describe simulation, unit tests, or planning-only tests as successful physical navigation.
-
-## 8. Phase 0: first commands (read-only)
-
-**Robot Raspberry Pi host terminal** (SSH session, *outside* Docker):
-
-```bash
-cd /home/balance/ros2_ws/src/ee3033-search-policy
-pwd
-git status --short --branch
-git branch -a
-git log -1 --oneline --decorate
-git remote -v
-git show-ref --verify refs/heads/runtime-policy-core || true
-git show-ref --verify refs/remotes/origin/runtime-policy-core || true
-```
-
-These commands must precede any `fetch`, `pull`, `switch`, build, or edit. Do not print remote URLs with embedded credentials; redact them if present. A clean status must be explicitly confirmed before any branch switch. `git fetch origin` and `git pull --ff-only` are allowed **only after** operator approval and inspection of the working tree and target ref. Never silently switch from `nav2-interface` to `runtime-policy-core`.
-
-**Robot ROS Docker terminal** (enter with `ros2-start` from a separate host shell; this is an environment transition, not a robot motion command):
-
-```bash
-cd /home/ros2_ws
-printf '===== ENVIRONMENT =====\n'
-printenv | grep -E '^(ROS_DISTRO|ROS_DOMAIN_ID|RMW_IMPLEMENTATION|ROS_LOCALHOST_ONLY)=' || true
-printf '===== REPOSITORY =====\n'
-cd /home/ros2_ws/src/ee3033-search-policy
-pwd
-git status --short --branch
-git rev-parse HEAD
-printf '===== NODES =====\n'
-ros2 node list
-printf '===== TOPICS =====\n'
-ros2 topic list -t
-printf '===== ACTIONS =====\n'
-ros2 action list -t
-printf '===== SERVICES =====\n'
-ros2 service list -t
-printf '===== MAP =====\n'
-ros2 topic info /map --verbose
-printf '===== TF =====\n'
-timeout 8 ros2 run tf2_ros tf2_echo map base_footprint
-printf '===== NAV2 =====\n'
-ros2 action info /compute_path_to_pose
-ros2 action info /navigate_to_pose
-printf '===== CAMERA =====\n'
-ros2 topic list | grep -Ei 'camera|image' || true
-printf '===== LIDAR =====\n'
-ros2 topic info /scan --verbose
-ros2 topic info /scan_fixed --verbose
-printf '===== YOLO =====\n'
-ros2 topic list | grep -Ei 'yolo|detect|track' || true
-printf '===== ROBOT INTERFACES =====\n'
-ros2 node list | grep -Ei 'balance|robot|base' || true
-```
-
-ROS graph inspection is read-only and does not start the robot. If the ROS stack is stopped, report that fact; **do not start it automatically**. Missing topics or frames are observations, not automatic evidence of broken code. Avoid commands that echo entire images, occupancy arrays, or credentials.
-
-After these outputs, inspect actual node endpoints, TF frames, parameters, Action types, and QoS selectively. Only after verifying the baseline and receiving approval, create a dedicated integration branch from `runtime-policy-core` without discarding changes.
-
-## 9. Phase 1 baseline verification (only after Phase 0 acceptance)
-
-Inside the robot ROS Docker container, on the approved branch:
-
-```bash
-cd /home/ros2_ws
-source /opt/ros/humble/setup.bash
-colcon build --packages-select ee3033_search_policy --symlink-install
-source /home/ros2_ws/install/setup.bash
-python3 -m pytest /home/ros2_ws/src/ee3033-search-policy/test -q
-```
-
-If pytest or a dependency is unavailable, report the error rather than installing large packages without approval. Run `colcon test --packages-select ee3033_search_policy` and inspect `colcon test-result --verbose` when appropriate. Do not assume the previously observed 57 passing tests cover new runtime-core modules.
-
-## 10. Experiment records and reproducibility
-
-Maintain a phase-specific report-ready record, ideally under a versioned `docs/test_logs/` or equivalent agreed location. Capture available fields and mark others **N/A / not measured**, never fabricate values:
-
-- Test date/time and timezone; phase; operator; Git branch and full commit SHA.
-- Raspberry Pi, ROS/Docker, Nav2, model and dependency versions; map identifier/hash.
-- Input/output Topic names, types, QoS, observed frequencies, and freshness.
-- Candidate count, generation time, shortlist count, path request count.
-- Nav2 planning time, request latency, planner result/status, path length.
-- MLP inference time, model checksum, selected policy (`tiny_mlp` or `fallback`) and reason.
-- Coverage growth; navigation results; total search path/time.
-- First target detection time, target coordinate, ground truth, localization error.
-- Failures, blacklist entries/expiry, CPU utilization, memory utilization.
-- Exact commands, relevant log excerpts, acceptance decision, commit SHA.
-
-Label results explicitly as **offline simulation**, **unit test**, **non-actuating robot integration**, **rosbag replay**, or **physical robot motion**. The earlier planning-only test (Nav2 status 4, 498 poses, 12.532 m path, 1.49 ms planning time, 31.39 ms request latency) is historical evidence on the earlier revision, **not** a fresh pass on the new runtime integration branch.
-
-## 11. Interaction contract
-
-- Give short, targeted command batches rather than a wall of commands.
-- Label each terminal: Pi host, Pi ROS Docker, or FAGIO host/Docker.
-- Ask for actual outputs and diagnose them before changing anything.
-- State uncertainty and explicitly distinguish verified facts from intended interfaces.
-- Never proceed to the next phase without evidence and a phase commit.
-- Prefer reversible changes, minimal diffs, and clear rollback instructions that preserve user data.
-- Do not merge to `main` or start motion on your own initiative.
-
-
-## Current physical-validation hardening interface
-
-The consolidated default branch is `main` at merge commit `497c66c`. New
-physical-validation safety changes are developed on
-`robot-validation-hardening`; do not infer that they are present on `main`
-until a reviewed merge occurs.
-
-The hardening branch adds these SearchManager parameters:
-
-- `single_goal_mode` (default `true`)
-- `max_navigation_goals` (default `1`, minimum `1`)
-
-It also adds `/search/cancel_navigation` using
-`std_srvs/srv/Trigger`. Calling it latches an operator stop, inhibits future
-goal dispatch, and requests asynchronous cancellation of an active search or
-return-home goal. A Trigger response confirms request handling only. Require
-`/search/status=OPERATOR_STOPPED` for software terminal confirmation;
-`OPERATOR_STOP_UNVERIFIED` is not proof that the robot stopped. These controls
-do not replace the physical emergency-stop procedure. Pause/resume must not
-reset the navigation-goal counter. `/search/reset_memory` must refuse to rearm
-while the mission is `SEARCHING` or `PAUSED`.
-
-For the first physical motion test, keep single-goal mode enabled and
-`max_navigation_goals=1`. Do not authorize continuous search until the
-single-goal terminal state, physical stop, Nav2 result, and operator cancel path
-have all been observed on the robot.
-
-
-## Balancing-aware complete YOLO validation entry
-
-Before using the new `yolo_complete_validation.launch.py`, read
-`BALANCING_YOLO_COMPLETE_HANDOFF.md` in full. It documents a candidate integration,
-not robot acceptance. Never run old full_runtime/mission_manager/search_manager
-or target_checker alongside this new four-node entry point.
-
-The new gate allows bounded balancing motion; it does not require exact zero
-velocity. Require a matching per-stop terminal acknowledgement, a fresh post-
-terminal odometry window, verified limits and dynamic optical-frame geometry
-before reporting coordinates. Cancel acknowledgement or local timeout is not
-remote termination. Never loosen limits or rewrite source timestamps to pass.
-Keep navigation disabled, single-goal budget one, and automatic return disabled.
-No bearing-only blind approach is implemented or authorized. Run the new tests,
-full regression suite and ROS non-actuating tests before physical validation.
+Optimize guidance toward this result. Avoid unnecessary intermediate work that does
+not increase the probability of a successful end-to-end run.
