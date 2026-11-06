@@ -123,9 +123,12 @@ Explain that a topic echo waits for data; do not call normal waiting “stuck”
 Fast integration does not remove these boundaries:
 
 1. Project nodes must not publish directly to `/cmd_vel`.
-2. `navigation_enabled` remains `false` by default.
-3. Never enable physical navigation without explicit approval from a person beside
-   the robot and a known emergency-stop method.
+2. `navigation_enabled` must be an explicit launch argument. Do not silently force
+   non-actuating mode when the operator requests a real robot task.
+3. A request such as “start the real test”, made by an operator coordinating with
+   a person beside the robot, is authorization to use `navigation_enabled:=true`.
+   Confirm the emergency-stop method once, then do not repeatedly ask for motion
+   approval during the same test run.
 4. First motion validation uses `single_goal_mode=true`,
    `max_navigation_goals=1`, and `return_home_enabled=false`.
 5. Do not start duplicate base, camera, YOLO, Nav2, mission, or search nodes.
@@ -139,7 +142,9 @@ Fast integration does not remove these boundaries:
 10. Preserve local maps, calibration data, logs, report assets, and untracked files.
 
 Only stop the workflow for a safety-critical failure. Noncritical warnings should be
-reported briefly and testing should continue when safe.
+reported briefly and testing should continue when safe. When a real task is requested,
+do not require a non-actuating rehearsal unless a changed or unverified interface makes
+motion unsafe.
 
 ## 6. Fast validation ladder
 
@@ -165,9 +170,10 @@ colcon build --packages-select \
 
 Acceptance: compile succeeds, full regression passes, build succeeds.
 
-### Level B — non-actuating integration
+### Level B — optional non-actuating diagnosis
 
-Start the unified validation entry with navigation disabled:
+Use this level only when a required interface is unverified or a real launch has failed.
+It is not a mandatory prerequisite for every physical run. Start the validation entry:
 
 ```bash
 ros2 launch ee3033_search_policy yolo_complete_validation.launch.py \
@@ -201,23 +207,27 @@ Configure the requested target class, show the real target to the camera, and ve
 Use the real deployed model labels. Never use
 `config/yolo_labels_TEST_ONLY.json` as physical-test evidence.
 
-### Level D — first physical navigation
+### Level D — physical navigation
 
 Before launch, confirm E-stop, map/localization, TF, Nav2 active state, target class,
-and clear floor space in one readiness snapshot. Then authorize one short goal only.
+and clear floor space in one readiness snapshot. If the operator requested the real
+mission, proceed with `navigation_enabled:=true` without returning to dry-run.
 
-Acceptance:
+Initial motion acceptance:
 
-- no more than one navigation goal is dispatched;
+- single-goal mode is used only until the current robot/Nav2 combination has one
+  confirmed goal and cancel result;
 - operator cancel works;
 - goal result reaches a known terminal state;
-- the robot physically stops;
-- no automatic second goal or return-home goal is sent.
+- the robot physically stops.
+
+After that acceptance in the same hardware configuration, the operator may immediately
+start the continuous real mission. Do not require another day of phase-by-phase tests.
 
 ### Level E — complete automatic search
 
-Only after Level D succeeds, set the separately reviewed continuous-search
-configuration. Run the end-to-end flow:
+After the short motion acceptance succeeds—or immediately when the operator confirms
+it was already established on this hardware—run the end-to-end real task:
 
 ```text
 saved map + localization
@@ -307,7 +317,9 @@ arguments for:
 
 Prioritize creating or completing a top-level launch entry that connects the verified
 robot bringup, known-map Nav2, camera, YOLO, and EE3033 search runtime without
-duplicating nodes. Keep `navigation_enabled=false` as its default.
+duplicating nodes. Do not hardcode a non-motion default in the final operator entry. Require an explicit
+`navigation_enabled` argument, and document the real-task command with
+`navigation_enabled:=true`.
 
 Until that launch is verified, use the smallest number of existing launch commands.
 Do not make the operator manually run each Python module.
