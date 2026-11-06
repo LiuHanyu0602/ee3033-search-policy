@@ -371,3 +371,13 @@ The project is complete only when the team can:
 
 Optimize guidance toward this result. Avoid unnecessary intermediate work that does
 not increase the probability of a successful end-to-end run.
+
+
+## Current real-robot test handoff
+
+For the next physical integration session, read
+`FAST_REAL_ROBOT_TEST_HANDOFF.md` before issuing commands. It contains the
+verified NCNN JSON interface, dynamic balancing-camera TF, current camera
+failure, configurable现场 target service, fast startup sequence and required
+one-command launch. Use one operator and do not start duplicate camera, YOLO,
+Nav2 or search-runtime nodes.
