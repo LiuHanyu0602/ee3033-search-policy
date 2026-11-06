@@ -26,7 +26,7 @@ def test_complete_runtime_has_bounded_executor_and_required_nodes():
         ROOT / "ee3033_search_policy" / "complete_runtime_node.py"
     ).read_text()
 
-    assert "MultiThreadedExecutor(num_threads=2)" in runtime
+    assert "SingleThreadedExecutor()" in runtime
     for node_type in (
         "EulerCameraTf",
         "ContinuousObservationAdapter",

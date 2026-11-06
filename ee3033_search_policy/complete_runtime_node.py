@@ -1,7 +1,7 @@
 """Run the complete search runtime in one ROS context."""
 
 import rclpy
-from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
+from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
 
 from .continuous_observation_adapter import ContinuousObservationAdapter
 from .euler_camera_tf_node import EulerCameraTf
@@ -21,7 +21,7 @@ NODE_TYPES = (
 
 def main(args=None):
     rclpy.init(args=args)
-    executor = MultiThreadedExecutor(num_threads=2)
+    executor = SingleThreadedExecutor()
     nodes = []
     try:
         for node_type in NODE_TYPES:
