@@ -18,16 +18,9 @@ def generate_launch_description():
     nav = LaunchConfiguration('navigation_enabled')
     labels = LaunchConfiguration('labels_file')
     calibration = LaunchConfiguration('calibration_file')
-    processes = []
-
     # base_footprint already carries planar map pose/yaw. Add only live body
     # roll/pitch, then the measured camera translation and REP-103 optical axes.
-    processes.append(ExecuteProcess(
-        cmd=['/usr/bin/python3', '-m',
-             'ee3033_search_policy.euler_camera_tf_node',
-             '--ros-args', '--params-file', params],
-        output='screen', name='euler_camera_tf'))
-    processes.extend([
+    processes = [
         Node(
             package='tf2_ros',
             executable='static_transform_publisher',
@@ -51,23 +44,22 @@ def generate_launch_description():
                 '--child-frame-id', 'default_cam',
             ],
         ),
-    ])
-
-    modules = ['continuous_observation_adapter', 'stamped_target_localizer_node',
-               'target_mission_coordinator', 'guarded_search_manager']
-    for module in modules:
-        cmd = ['/usr/bin/python3', '-m', 'ee3033_search_policy.'+module,
-               '--ros-args', '--params-file', params]
-        if module == 'guarded_search_manager':
-            cmd += ['-p', ['navigation_enabled:=', nav],
-                    '-p', 'return_home_enabled:=false',
-                    '-p', 'single_goal_mode:=true',
-                    '-p', 'max_navigation_goals:=1']
-        if module in ('continuous_observation_adapter','stamped_target_localizer_node'):
-            cmd += ['-p', ['calibration_file:=',calibration]]
-        if module == 'continuous_observation_adapter':
-            cmd += ['-p', ['labels_file:=',labels]]
-        processes.append(ExecuteProcess(cmd=cmd, output='screen', name=module))
+        ExecuteProcess(
+            cmd=[
+                '/usr/bin/python3', '-m',
+                'ee3033_search_policy.complete_runtime_node',
+                '--ros-args', '--params-file', params,
+                '-p', ['navigation_enabled:=', nav],
+                '-p', 'return_home_enabled:=false',
+                '-p', 'single_goal_mode:=true',
+                '-p', 'max_navigation_goals:=1',
+                '-p', ['calibration_file:=', calibration],
+                '-p', ['labels_file:=', labels],
+            ],
+            output='screen',
+            name='complete_search_runtime',
+        ),
+    ]
     actions = [DeclareLaunchArgument('params_file', default_value=os.path.join(
         share,'config','yolo_complete_validation.yaml')),
         DeclareLaunchArgument('navigation_enabled', default_value='false'),
