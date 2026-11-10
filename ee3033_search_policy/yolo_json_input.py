@@ -59,8 +59,11 @@ class NcnnJsonInput:
         timestamp = data['timestamp']
         stamp = stamp_nanoseconds(timestamp.get('sec'), timestamp.get('nanosec'))
         source_stamp = timestamp['sec'] + timestamp['nanosec']*1e-9
-        if not 0 <= ros_now-source_stamp <= max_age:
-            raise ValueError('NCNN source timestamp is stale or in the future')
+        source_age = ros_now-source_stamp
+        if not 0 <= source_age <= max_age:
+            raise ValueError(
+                f'NCNN source timestamp age {source_age:.3f}s is outside '
+                f'[0, {max_age:.3f}]s')
         image = self.images.get(stamp)
         if image is None:
             raise ValueError('No source Image metadata with exactly matching NCNN timestamp')
