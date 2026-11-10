@@ -76,8 +76,12 @@ class FakeNode:
         )
 
     def create_timer(self, period, callback, **kwargs):
-        timer = NS(callback=callback, canceled=False)
+        timer = NS(callback=callback, canceled=False, reset_count=0)
         timer.cancel = lambda: setattr(timer, "canceled", True)
+        def reset():
+            timer.canceled = False
+            timer.reset_count += 1
+        timer.reset = reset
         self.timers.append(timer)
         return timer
 
@@ -154,8 +158,12 @@ def finish(handle, status=4, result=None):
 
 
 def test_planning_success_and_sequential_reuse(api):
-    client = api.Nav2Client(FakeNode())
+    node = FakeNode()
+    client = api.Nav2Client(node)
+    assert node.timers[0].canceled
     request = client.compute_path(pose(), pose(3.0, 4.0))
+    assert not node.timers[0].canceled
+    assert node.timers[0].reset_count == 1
     action = FakeClient.instances[0]
     assert len(FakeClient.instances) == 1
     goal = action.sent[0][0]
@@ -168,9 +176,12 @@ def test_planning_success_and_sequential_reuse(api):
     assert result.path_length_m == 5.0
     assert result.planning_time_s == pytest.approx(0.0011)
     assert result.latency_s >= 0
+    assert node.timers[0].canceled
     assert not request.cancel().result()
     second = client.compute_path(pose(), pose(2.0, 1.0))
     assert not second.future.done() and len(action.sent) == 2
+    assert not node.timers[0].canceled
+    assert node.timers[0].reset_count == 2
 
 
 def test_busy_does_not_send_or_displace_first(api):

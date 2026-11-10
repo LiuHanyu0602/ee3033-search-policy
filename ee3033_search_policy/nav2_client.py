@@ -118,6 +118,7 @@ class _ActionChannel(Generic[ResultT]):
             0.05, self._check_timeout, callback_group=self._group,
             clock=Clock(clock_type=ClockType.STEADY_TIME),
         )
+        self._timer.cancel()
 
     def submit(
         self, goal, timeout_s: float, frame: str,
@@ -137,6 +138,7 @@ class _ActionChannel(Generic[ResultT]):
                 self._finish(request, error="Action server is not available")
             else:
                 self._active = request
+                self._timer.reset()
 
                 def on_feedback(message):
                     if not request.future.done() and feedback_callback is not None:
@@ -204,6 +206,7 @@ class _ActionChannel(Generic[ResultT]):
             return
         if self._active is request:
             self._active = None
+            self._timer.cancel()
         fields = dict(
             success=not error and status == GoalStatus.STATUS_SUCCEEDED,
             status=status, error=error,
