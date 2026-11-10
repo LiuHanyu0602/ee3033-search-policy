@@ -141,6 +141,11 @@ sed -i   -e 's/exclusive_navigation_verified: false/exclusive_navigation_verifie
 
 ### Search runtime
 
+The launch intentionally keeps the high-rate adapter, localization, odometry,
+TF and search callbacks in isolated processes. They are still started with one
+launch command. Do not consolidate them into one rclpy executor: physical-robot
+profiling showed sustained executor entity-scanning load and reduced NCNN rate.
+
 ```bash
 cd /home/ros2_ws/src/ee3033-search-policy
 ros2 launch   ee3033_search_policy   yolo_complete_validation.launch.py   params_file:=/tmp/ee3033_real_robot.yaml   navigation_enabled:=true   labels_file:="$PWD/config/yolo_ncnn_coco80_labels.json"   calibration_file:="$PWD/results/updated_calibration/calibration.npz"
