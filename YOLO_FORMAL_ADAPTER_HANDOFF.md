@@ -29,20 +29,20 @@ Use `input_format:=ncnn_json` for this producer. The default remains
 `input_format:=detection_array` for existing typed producers. Do not start both
 message types on the same topic.
 
-JSON has no frame ID or image size. In JSON mode the adapter also subscribes to
-`image_topic` (default `/camera/image_raw`, BEST_EFFORT depth 1) and retains only
-the latest 64 image metadata records, not pixel buffers. It matches timestamps
-exactly in integer nanoseconds; the output header preserves the source stamp and
-frame without substitution from a newer image or CameraInfo. Missing, stale or
-future source metadata, unsupported encodings, malformed JSON and invalid bbox
-values log explicit rejection and produce no observation. If a detection arrives
-before its source metadata, it is rejected rather than guessed or queued; later
+JSON has no frame ID or image size. In JSON mode the adapter uses the matching
+`CameraInfo` header and dimensions, retaining only the latest 64 metadata records
+and never subscribing to or copying raw image pixels. It matches timestamps
+exactly in integer nanoseconds; the output header preserves the detector source
+stamp and matching camera frame without substituting newer metadata. Missing,
+stale or future source metadata, malformed JSON and invalid bbox values log
+explicit rejection and produce no observation. If a detection arrives before
+its matching CameraInfo, it is rejected rather than guessed or queued; later
 fresh matching frames recover normally.
 
 The JSON subscription is RELIABLE depth 1. Empty detection arrays are valid
 heartbeats and break partial confirmation sequences. No tracking ID is invented;
 the existing IoU continuity is not proof of persistent physical identity.
-Source-image geometry must agree with the validated CameraInfo; a change clears
+CameraInfo geometry must agree with the validated calibration; a change clears
 the episode and metadata cache. The operator observed 640x480 rgb8 with matching
 new K/D and frame name `default_cam`; that name alone does NOT prove a valid
 optical-frame TF for map localization.
@@ -271,7 +271,6 @@ ros2 run ee3033_search_policy yolo_detection_adapter --ros-args \
   -p input_format:=ncnn_json \
   -p labels_file:=/tmp/ee3033_yolo_labels_520cpu0n.json \
   -p detections_topic:=/yolo/detections \
-  -p image_topic:=/camera/image_raw \
   -p camera_info_topic:=/camera_info \
   -p mission_topic:=/bearing_test/mission_state \
   -p geometry_verified:=true

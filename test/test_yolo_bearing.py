@@ -146,7 +146,7 @@ def adapter(calibration, monkeypatch, tmp_path):
         'rclpy.qos': {'QoSProfile': lambda **kwargs: NS(**kwargs),
                       'ReliabilityPolicy': NS(RELIABLE=1, BEST_EFFORT=2),
                       'DurabilityPolicy': NS(TRANSIENT_LOCAL=1)},
-        'sensor_msgs.msg': {'CameraInfo': object, 'Image': object},
+        'sensor_msgs.msg': {'CameraInfo': object},
         'std_msgs.msg': {'String': NS, 'Header': lambda: NS(stamp=NS())},
         'std_srvs.srv': {'Trigger': object},
         'ee3033_search_policy_interfaces.msg': {'TargetObservation': NS},
@@ -226,7 +226,7 @@ def test_adapter_accepts_matching_camera_info(adapter):
 
 
 def test_json_adapter_outputs_angle_without_yolo_msgs(adapter, monkeypatch):
-    from test_yolo_json_input import LIVE_SAMPLE, image, source_time
+    from test_yolo_json_input import LIVE_SAMPLE, camera_info, source_time
     import json
 
     module = sys.modules[adapter.__class__.__module__]
@@ -236,7 +236,7 @@ def test_json_adapter_outputs_angle_without_yolo_msgs(adapter, monkeypatch):
     adapter._now.return_value = source_time()
     adapter.session = AdapterSession({39: 'bottle', 0: 'person'}, required_frames=1)
     adapter.session.set_state('WAIT_FOR_TARGET')
-    adapter._image(image())
+    adapter.json_input.record_camera_info(camera_info(), 100.)
     adapter._detect_json(NS(data=json.dumps(LIVE_SAMPLE)))
     assert adapter.session.ready(source_time(), 100.)
     adapter.session.configure('bottle', .65, source_time(), 100.)
@@ -244,7 +244,7 @@ def test_json_adapter_outputs_angle_without_yolo_msgs(adapter, monkeypatch):
     sample = json.loads(json.dumps(LIVE_SAMPLE))
     sample['timestamp']['nanosec'] += 30_000_000
     adapter._now.return_value = source_time(sample)
-    adapter._image(image(sample))
+    adapter.json_input.record_camera_info(camera_info(sample), 100.)
     adapter._detect_json(NS(data=json.dumps(sample)))
     result = adapter.observations.publish.call_args.args[0]
     assert result.header.frame_id == 'default_cam'
@@ -255,7 +255,7 @@ def test_json_adapter_outputs_angle_without_yolo_msgs(adapter, monkeypatch):
     assert result.confirmed
 
 
-def test_json_adapter_rejects_missing_image_with_log(adapter):
+def test_json_adapter_rejects_missing_source_metadata_with_log(adapter):
     from test_yolo_json_input import LIVE_SAMPLE, source_time
     import json
 
@@ -267,19 +267,11 @@ def test_json_adapter_rejects_missing_image_with_log(adapter):
     adapter.get_logger.return_value.warning.assert_called_once()
 
 
-def test_changed_source_image_clears_cached_metadata_and_episode(adapter):
-    adapter._image(NS(width=320, height=320, header=NS(frame_id='camera_optical')))
-    adapter.json_input.clear.assert_called_once()
-    adapter.session.clear.assert_called_once()
-    adapter._configuration.assert_called_once()
-    adapter.get_logger.return_value.warning.assert_called_once()
-
-
 def test_json_node_initializes_without_yolo_msgs(adapter):
     node = adapter.__class__()
     assert node.parameters['input_format'] == 'ncnn_json'
     topics = {topic for _, topic, _ in node.subscriptions}
     assert '/yolo/detections' in topics
-    assert '/camera/image_raw' in topics
+    assert '/camera/image_raw' not in topics
     assert '/camera_info' in topics
     assert node.geometry_verified is False

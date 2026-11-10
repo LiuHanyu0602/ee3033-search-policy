@@ -55,7 +55,6 @@ yolo_detection_adapter:
     input_format: ncnn_json
     detections_topic: /yolo/detections
     camera_info_topic: /camera_info
-    image_topic: /camera/image_raw
     geometry_verified: false
     required_frames: 3
     max_age_s: 0.5

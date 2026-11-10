@@ -11,7 +11,7 @@ from ament_index_python.packages import get_package_share_directory
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
-from sensor_msgs.msg import CameraInfo, Image
+from sensor_msgs.msg import CameraInfo
 from std_msgs.msg import Header, String
 from std_srvs.srv import Trigger
 from ee3033_search_policy_interfaces.msg import TargetObservation
@@ -34,7 +34,7 @@ class YoloDetectionAdapter(Node):
             'required_frames': 3, 'max_age_s': .5, 'max_gap_s': .4,
             'minimum_iou': .2, 'geometry_verified': False,
             'calibration_file': str(calibration),
-            'input_format': 'detection_array', 'image_topic': '/camera/image_raw',
+            'input_format': 'detection_array',
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
@@ -69,7 +69,6 @@ class YoloDetectionAdapter(Node):
             detections_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE)
             self.create_subscription(String, str(p('detections_topic')), self._detect_json,
                                      detections_qos)
-            self.create_subscription(Image, str(p('image_topic')), self._image, sensors)
         else:
             from yolo_msgs.msg import DetectionArray
             self.create_subscription(DetectionArray, str(p('detections_topic')),
@@ -157,22 +156,6 @@ class YoloDetectionAdapter(Node):
         except (ValueError, TypeError, AttributeError, OverflowError) as exc:
             self.session.frames.update(None, self._now())
             self.get_logger().warning('Rejected detection: ' + str(exc))
-
-    def _image(self, msg):
-        if not self.geometry_verified or self.camera is None:
-            return
-        try:
-            if ((msg.width, msg.height, msg.header.frame_id) !=
-                    (self.camera.width, self.camera.height, self.camera.header.frame_id)):
-                raise ValueError('Source Image size/frame does not match calibrated CameraInfo')
-            self.json_input.record_image(msg, time.monotonic())
-        except ValueError as exc:
-            self.json_input.clear()
-            self.last_frame = ''
-            self.session.clear()
-            self._configuration()
-            self.get_logger().warning('Rejected source Image: ' + str(exc),
-                                      throttle_duration_sec=2.0)
 
     def _detect_json(self, msg):
         if not self.geometry_verified or self.camera is None:
