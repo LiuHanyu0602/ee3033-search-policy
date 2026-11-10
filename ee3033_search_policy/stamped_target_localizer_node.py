@@ -40,13 +40,16 @@ class StampedTargetLocalizer(Node):
         self.listener = TransformListener(self.buffer, self)
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
-        self.output = self.create_publisher(TargetEstimate, '/target/estimate_candidate', 10)
+        realtime = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
+        self.output = self.create_publisher(
+            TargetEstimate, '/target/estimate_candidate', realtime)
         self.status = self.create_publisher(String, '/target/localization_status', latched)
         self.create_subscription(String, '/target/configuration', self._configuration, latched)
         self.create_subscription(String, '/target/localization_reset', self._reset, latched)
-        self.create_subscription(CameraInfo, str(p('camera_info_topic')), self._camera,
-            QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))
-        self.create_subscription(TargetObservation, '/target/observation', self._observation, 10)
+        self.create_subscription(
+            CameraInfo, str(p('camera_info_topic')), self._camera, realtime)
+        self.create_subscription(
+            TargetObservation, '/target/observation', self._observation, realtime)
         self.status.publish(String(data='WAITING_FOR_VERIFIED_GEOMETRY'))
 
     def _reset(self, msg):

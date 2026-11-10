@@ -166,7 +166,7 @@ done
 
 ros2 topic echo /target/adapter_status --once   --qos-durability transient_local --qos-reliability reliable
 
-ros2 topic echo /search/runtime_state --once   --qos-durability transient_local --qos-reliability reliable
+ros2 topic echo /search/runtime_state --once   --qos-durability volatile --qos-reliability best_effort
 ```
 
 Proceed only when the adapter is `WAIT_FOR_TARGET` or `TARGET_CONFIGURED`, and runtime reports `ready=true`, `quiescent=true`, and `navigation_enabled=true`.

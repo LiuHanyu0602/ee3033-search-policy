@@ -111,15 +111,15 @@ launch 强制 single_goal_mode=true/max_navigation_goals=1/return_home_enabled=f
 
 | 输入/输出 | 类型 | 说明 |
 | --- | --- | --- |
-| /target/observation | TargetObservation | 带原图时间/optical frame/episode；bearing 不是 map yaw |
-| /target/estimate_candidate | TargetEstimate | 定位候选，不可当最终坐标 |
+| /target/observation | TargetObservation，BEST_EFFORT+volatile+depth 1 | 带原图时间/optical frame/episode；bearing 不是 map yaw |
+| /target/estimate_candidate | TargetEstimate，BEST_EFFORT+volatile+depth 1 | 定位候选，不可当最终坐标 |
 | /target/configuration | String JSON | adapter 的 episode/类别配置，沿用现有契约 |
 | /target/adapter_status | String | 周期源健康；不依赖单条缓存 READY |
 | /mission/state | String，可靠+transient local | 给 RViz/adapter 的状态，不是搜索器运动授权源 |
-| /mission/lease | String JSON，可靠+transient local | boot、原时钟 stamp、episode、state、stop_token，0.1 s 续约 |
-| /search/runtime_state | String JSON，可靠+transient local | 搜索器 boot、任务 boot 回显、本次停止 token、终态、就绪/次数 |
+| /mission/lease | String JSON，BEST_EFFORT+volatile+depth 1 | boot、原时钟 stamp、episode、state、stop_token，0.1 s 续约；丢失会 fail closed |
+| /search/runtime_state | String JSON，BEST_EFFORT+volatile+depth 1 | 搜索器 boot、任务 boot 回显、本次停止 token、终态、就绪/次数 |
 | /mission/diagnostics | String JSON | 摆动原因/各测量值/验证开关/心跳状态 |
-| /odom | Odometry，BEST_EFFORT 订阅 | 当前已观察到 odom_combined，仍需确认实际 frame/数据正确 |
+| /odom | Odometry，BEST_EFFORT+volatile+depth 1 订阅 | 当前已观察到 odom_combined；丢帧由 motion gap 检查 fail closed |
 | /target/estimate | TargetEstimate，可靠+transient local | 只有通过最终边界才发布 valid=true |
 | /target_position | PointStamped，可靠+transient local | 最终兼容输出；消费者必须同时核对带 episode 的 estimate |
 | /target_found | Bool，可靠+transient local | 本实现含义为“最终坐标已上报”，不是单帧检测事件 |
@@ -246,7 +246,8 @@ ros2 launch ee3033_search_policy yolo_complete_validation.launch.py params_file:
 ```bash
 source /home/ros2_ws/install/setup.bash
 timeout 5 ros2 topic echo /mission/state --once --qos-durability transient_local
-timeout 5 ros2 topic echo /search/runtime_state --once --qos-durability transient_local
+timeout 5 ros2 topic echo /search/runtime_state --once \
+  --qos-durability volatile --qos-reliability best_effort
 timeout 5 ros2 topic echo /mission/diagnostics --once --qos-durability transient_local
 ```
 

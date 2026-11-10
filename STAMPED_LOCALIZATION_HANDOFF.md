@@ -8,7 +8,8 @@ test files and this note; does NOT replace old localizer or change navigation.
 Node: `python3 -m ee3033_search_policy.stamped_target_localizer_node`.
 Inputs: /target/observation (TargetObservation), /target/configuration (adapter's
 latched JSON), configurable camera_info_topic, TF.
-Outputs: /target/estimate_candidate (TargetEstimate, volatile),
+Outputs: /target/estimate_candidate
+(TargetEstimate, BEST_EFFORT/volatile/depth 1),
 /target/localization_status (latched String).
 No /target_position, /target_found, navigation action or cmd_vel output.
 No setup.py entry point or full_runtime wiring in this checkpoint.

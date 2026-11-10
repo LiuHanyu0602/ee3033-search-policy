@@ -55,7 +55,7 @@ class EulerCameraTf(Node):
         if not self.parent or not self.child or not all(math.isfinite(v) for v in values):
             raise ValueError("Invalid Euler camera TF parameters")
         self.broadcaster = TransformBroadcaster(self)
-        qos = QoSProfile(depth=5, reliability=ReliabilityPolicy.BEST_EFFORT)
+        qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.create_subscription(
             Vector3Stamped, str(p("euler_topic")), self._euler, qos
         )

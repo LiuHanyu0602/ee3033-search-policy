@@ -60,15 +60,15 @@ class YoloDetectionAdapter(Node):
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
         sensors = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
-        self.observations = self.create_publisher(TargetObservation, '/target/observation', 10)
+        self.observations = self.create_publisher(
+            TargetObservation, '/target/observation', sensors)
         self.status_pub = self.create_publisher(String, '/target/adapter_status', latched)
         self.config_pub = self.create_publisher(String, '/target/configuration', latched)
         self.classes_pub = self.create_publisher(String, '/target/available_classes', latched)
         self.classes_pub.publish(String(data=json.dumps(self.session.target.labels)))
         if input_format == 'ncnn_json':
-            detections_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE)
             self.create_subscription(String, str(p('detections_topic')), self._detect_json,
-                                     detections_qos)
+                                     sensors)
         else:
             from yolo_msgs.msg import DetectionArray
             self.create_subscription(DetectionArray, str(p('detections_topic')),

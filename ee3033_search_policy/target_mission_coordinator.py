@@ -68,8 +68,9 @@ class TargetMissionCoordinator(Node):
         self.last_clock = None
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        realtime = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.state_pub = self.create_publisher(String, '/mission/state', latched)
-        self.lease_pub = self.create_publisher(String, '/mission/lease', latched)
+        self.lease_pub = self.create_publisher(String, '/mission/lease', realtime)
         self.diagnostic_pub = self.create_publisher(String, '/mission/diagnostics', latched)
         self.localization_reset_pub = self.create_publisher(
             String, '/target/localization_reset', latched)
@@ -78,11 +79,14 @@ class TargetMissionCoordinator(Node):
         self.found_pub = self.create_publisher(Bool, '/target_found', latched)
         self.create_subscription(String, '/target/configuration', self._configuration, latched)
         self.create_subscription(String, '/target/adapter_status', self._adapter, latched)
-        self.create_subscription(String, '/search/runtime_state', self._runtime, latched)
-        self.create_subscription(TargetObservation, '/target/observation', self._observation, 10)
-        self.create_subscription(TargetEstimate, '/target/estimate_candidate', self._estimate, 10)
-        self.create_subscription(Odometry, str(p('odom_topic')), self._odom,
-            QoSProfile(depth=20, reliability=ReliabilityPolicy.BEST_EFFORT))
+        self.create_subscription(
+            String, '/search/runtime_state', self._runtime, realtime)
+        self.create_subscription(
+            TargetObservation, '/target/observation', self._observation, realtime)
+        self.create_subscription(
+            TargetEstimate, '/target/estimate_candidate', self._estimate, realtime)
+        self.create_subscription(
+            Odometry, str(p('odom_topic')), self._odom, realtime)
         self.mission_services = []
         for name, callback in [('start_mapping',self._start_mapping),
                                ('finish_mapping',self._finish_mapping),

@@ -49,8 +49,11 @@ class GuardedSearchManager(SearchManager):
             raise ValueError('This validation workflow requires return_home_enabled=false')
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
-        self.runtime_pub = self.create_publisher(String, '/search/runtime_state', latched)
-        self.create_subscription(String, '/mission/lease', self._lease_cb, latched)
+        realtime = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
+        self.runtime_pub = self.create_publisher(
+            String, '/search/runtime_state', realtime)
+        self.create_subscription(
+            String, '/mission/lease', self._lease_cb, realtime)
         self.create_subscription(LaserScan, str(p('scan_topic')), self._scan_cb,
             QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))
         action_name = str(self.get_parameter('navigate_action').value).rstrip('/')

@@ -8,7 +8,7 @@ ee3033_search_policy_interfaces package. Typed input additionally requires
 yolo_msgs; NCNN JSON mode does not import it. No Ultralytics needed by the adapter.
 
 Services: /target/set_class (SetTargetClass), /target/reset (Trigger).
-Outputs: /target/observation (TargetObservation, volatile),
+Outputs: /target/observation (TargetObservation, BEST_EFFORT/volatile/depth 1),
 /target/configuration (latched String JSON), /target/available_classes (latched
 String JSON), /target/adapter_status (latched String).
 Inputs: parameter detections_topic (default /yolo/detections, must verify live),
