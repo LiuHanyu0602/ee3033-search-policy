@@ -22,6 +22,9 @@ class Base:
     def _nav_done(self, index, future):
         self.base_done = True
 
+    def _finish_observation(self):
+        self.base_observation = True
+
 
 def load_class(filename, name, base):
     tree = ast.parse((ROOT / filename).read_text())
@@ -264,6 +267,38 @@ class TestCompleteMissionProtocol(unittest.TestCase):
         self.assertIsNone(g.active_navigation)
         self.assertIsNone(g.observation_deadline)
         self.assertFalse(getattr(g,'base_done',False))
+
+    def observation_guard(self, yaw):
+        g=self.guard()
+        g._robot_pose=lambda: (0.,0.,yaw)
+        g.selected_index=0
+        g.lease={'episode':'e','camera_ready':True}
+        g.candidates=NS(world_x=[0.1],world_y=[0.],headings=[0.])
+        g.observation_position_tolerance=.15
+        g.observation_yaw_tolerance=.25
+        g.observation_deadline=1.
+        g.navigation_goal_count=1
+        g.max_navigation_goals=1
+        g.single_goal_mode=True
+        g._failure=Mock()
+        g._finish_search=Mock()
+        return g
+
+    def test_observation_accepts_deployed_nav2_yaw_tolerance(self):
+        g=self.observation_guard(.24)
+        g._finish_observation()
+        self.assertTrue(g.base_observation)
+        g._failure.assert_not_called()
+
+    def test_observation_failure_reports_pose_metrics(self):
+        g=self.observation_guard(.26)
+        g._finish_observation()
+        message=g._failure.call_args.args[1]
+        self.assertIn('distance_m=0.100',message)
+        self.assertIn('yaw_error_rad=0.260',message)
+        self.assertIn('yaw_limit_rad=0.250',message)
+        g._finish_search.assert_called_once_with(
+            'SINGLE_GOAL_OBSERVATION_UNVERIFIED')
 
     def lease_guard(self, episode='old'):
         g=Guard.__new__(Guard)

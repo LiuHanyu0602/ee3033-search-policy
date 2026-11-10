@@ -255,18 +255,28 @@ class GuardedSearchManager(SearchManager):
         pose = self._robot_pose()
         index = self.selected_index
         source_ready = bool(self.lease and self.lease.get('camera_ready'))
-        valid = pose is not None and index is not None and source_ready and self._healthy()[0]
-        if valid:
+        healthy, health_reason = self._healthy()
+        distance = angle = math.nan
+        if pose is not None and index is not None:
             distance = math.hypot(pose[0]-self.candidates.world_x[index],
                                   pose[1]-self.candidates.world_y[index])
             angle = pose[2]-self.candidates.headings[index]
             angle = abs(math.atan2(math.sin(angle), math.cos(angle)))
-            valid = distance <= .15 and angle <= .20
+        valid = (pose is not None and index is not None and source_ready and healthy and
+                 distance <= self.observation_position_tolerance and
+                 angle <= self.observation_yaw_tolerance)
         if not valid:
             self.observation_deadline = None
             self.selected_index, self.busy = None, False
             if index is not None:
-                self._failure(index, 'Observation pose/camera readiness not verified')
+                self._failure(
+                    index,
+                    'Observation verification failed: '
+                    f'pose_available={pose is not None}, camera_ready={source_ready}, '
+                    f'health={health_reason}, distance_m={distance:.3f}, '
+                    f'position_limit_m={self.observation_position_tolerance:.3f}, '
+                    f'yaw_error_rad={angle:.3f}, '
+                    f'yaw_limit_rad={self.observation_yaw_tolerance:.3f}')
             if self.single_goal_mode and self.navigation_goal_count >= self.max_navigation_goals:
                 self._finish_search('SINGLE_GOAL_OBSERVATION_UNVERIFIED')
             return

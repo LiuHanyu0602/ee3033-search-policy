@@ -24,6 +24,8 @@ search_manager:
     lease_timeout_s: 0.6
     tf_max_age_s: 0.3
     scan_max_age_s: 0.5
+    observation_position_tolerance_m: 0.15
+    observation_yaw_tolerance_rad: 0.25
 
 target_mission_coordinator:
   ros__parameters:

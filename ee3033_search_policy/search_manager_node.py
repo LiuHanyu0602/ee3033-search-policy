@@ -58,6 +58,8 @@ class SearchManager(Node):
             'occupied_threshold': 65, 'shortlist_size': 32,
             'planning_candidates': 16, 'linear_speed_mps': 0.25,
             'angular_speed_rps': 0.8, 'observation_time_s': 0.25,
+            'observation_position_tolerance_m': 0.15,
+            'observation_yaw_tolerance_rad': 0.25,
             'time_discount_s': 20.0, 'planning_timeout_s': 8.0,
             'navigation_timeout_s': 120.0, 'decision_period_s': 0.5,
             'coverage_target': 0.995, 'minimum_gain_m2': 0.01,
@@ -83,6 +85,13 @@ class SearchManager(Node):
         self.shortlist_size, self.planning_candidates = int(p('shortlist_size')), int(p('planning_candidates'))
         self.linear_speed, self.angular_speed = float(p('linear_speed_mps')), float(p('angular_speed_rps'))
         self.observation_time, self.time_discount = float(p('observation_time_s')), float(p('time_discount_s'))
+        self.observation_position_tolerance = float(p('observation_position_tolerance_m'))
+        self.observation_yaw_tolerance = float(p('observation_yaw_tolerance_rad'))
+        if (not math.isfinite(self.observation_position_tolerance) or
+                self.observation_position_tolerance <= 0 or
+                not math.isfinite(self.observation_yaw_tolerance) or
+                self.observation_yaw_tolerance <= 0):
+            raise ValueError('Observation pose tolerances must be finite and positive')
         self.planning_timeout, self.navigation_timeout = float(p('planning_timeout_s')), float(p('navigation_timeout_s'))
         self.coverage_target, self.minimum_gain_m2 = float(p('coverage_target')), float(p('minimum_gain_m2'))
         self.max_failures, self.failure_cooldown = int(p('max_candidate_failures')), float(p('failure_cooldown_s'))
