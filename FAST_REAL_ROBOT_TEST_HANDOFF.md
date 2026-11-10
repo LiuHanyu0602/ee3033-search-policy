@@ -148,10 +148,13 @@ profiling showed sustained executor entity-scanning load and reduced NCNN rate.
 
 ```bash
 cd /home/ros2_ws/src/ee3033-search-policy
-ros2 launch   ee3033_search_policy   yolo_complete_validation.launch.py   params_file:=/tmp/ee3033_real_robot.yaml   navigation_enabled:=true   labels_file:="$PWD/config/yolo_ncnn_coco80_labels.json"   calibration_file:="$PWD/results/updated_calibration/calibration.npz"
+ros2 launch   ee3033_search_policy   yolo_complete_validation.launch.py   params_file:=/tmp/ee3033_real_robot.yaml   navigation_enabled:=true   single_goal_mode:=true   max_navigation_goals:=1   labels_file:="$PWD/config/yolo_ncnn_coco80_labels.json"   calibration_file:="$PWD/results/updated_calibration/calibration.npz"
 ```
 
 Starting the runtime does not move the robot until `/mission/start_search` is called.
+After one successful single-goal result, continuous search must be explicitly
+selected with `single_goal_mode:=false max_navigation_goals:=100`; do not rely
+on the parameter file to override launch safety arguments.
 
 ## 6. Fast readiness check
 

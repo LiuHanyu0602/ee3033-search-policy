@@ -16,6 +16,8 @@ def generate_launch_description():
     share = get_package_share_directory('ee3033_search_policy')
     params = LaunchConfiguration('params_file')
     nav = LaunchConfiguration('navigation_enabled')
+    single_goal = LaunchConfiguration('single_goal_mode')
+    max_goals = LaunchConfiguration('max_navigation_goals')
     labels = LaunchConfiguration('labels_file')
     calibration = LaunchConfiguration('calibration_file')
     processes = []
@@ -72,8 +74,8 @@ def generate_launch_description():
             cmd += [
                 '-p', ['navigation_enabled:=', nav],
                 '-p', 'return_home_enabled:=false',
-                '-p', 'single_goal_mode:=true',
-                '-p', 'max_navigation_goals:=1',
+                '-p', ['single_goal_mode:=', single_goal],
+                '-p', ['max_navigation_goals:=', max_goals],
             ]
         if module in ('continuous_observation_adapter', 'stamped_target_localizer_node'):
             cmd += ['-p', ['calibration_file:=', calibration]]
@@ -84,6 +86,8 @@ def generate_launch_description():
     actions = [DeclareLaunchArgument('params_file', default_value=os.path.join(
         share,'config','yolo_complete_validation.yaml')),
         DeclareLaunchArgument('navigation_enabled', default_value='false'),
+        DeclareLaunchArgument('single_goal_mode', default_value='true'),
+        DeclareLaunchArgument('max_navigation_goals', default_value='1'),
         DeclareLaunchArgument('labels_file', description='Actual deployed model label JSON, mandatory'),
         DeclareLaunchArgument('calibration_file', default_value=os.path.join(
             share,'calibration','calibration.npz'))]
