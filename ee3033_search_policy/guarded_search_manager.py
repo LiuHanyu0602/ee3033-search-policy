@@ -80,6 +80,8 @@ class GuardedSearchManager(SearchManager):
                 # Coordinator replacement is not a rearm instruction.
                 self.unknown_terminal = True
             previous = self.mission_state
+            episode_changed = bool(
+                old and d.get('episode') != old.get('episode'))
             self.lease, self.lease_receipt = d, time.monotonic()
             self.mission_state = str(d['state'])
             if previous != self.mission_state:
@@ -95,9 +97,15 @@ class GuardedSearchManager(SearchManager):
             if self.mission_state != 'SEARCHING':
                 self.observation_deadline = None
                 self._cancel('coordinator inhibits dispatch')
+                if (self.mission_state == 'WAIT_FOR_TARGET' and
+                        episode_changed and d.get('episode') and
+                        not self.unknown_terminal):
+                    self.navigation_goal_count = 0
+                    self.operator_cancel_requested = False
+                    self.finished, self.busy = False, False
             elif previous != 'SEARCHING' and not self.unknown_terminal:
                 # Resume preserves budget. A fresh configured episode resets it.
-                if old and d.get('episode') != old.get('episode'):
+                if episode_changed:
                     self.navigation_goal_count = 0
                 if previous == 'WAIT_FOR_TARGET':
                     self.finished = False

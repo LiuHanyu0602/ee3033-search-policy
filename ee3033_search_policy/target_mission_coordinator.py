@@ -350,7 +350,7 @@ class TargetMissionCoordinator(Node):
     def _start_search(self, request, response):
         if (self.state != 'WAIT_FOR_TARGET' or not self._source_ready() or
                 not self.runtime.get('quiescent') or not self.verified or
-                not self.odom_healthy):
+                not self.odom_healthy or self.runtime.get('finished')):
             return self._response(response,False,'Require configured fresh detector, robot readiness, verified motion interrupt monitor and WAIT_FOR_TARGET')
         self.stop_token = ''
         self.search_deadline = time.monotonic()+self.mission_timeout

@@ -206,6 +206,14 @@ class TestCompleteMissionProtocol(unittest.TestCase):
         self.assertTrue(response.success)
         self.assertEqual(m.search_deadline,1234.)
 
+    def test_start_search_waits_for_runtime_rearm(self):
+        m=self.mission()
+        m.state='WAIT_FOR_TARGET'
+        m.runtime=dict(quiescent=True,finished=True)
+        response=m._start_search(None,NS())
+        self.assertFalse(response.success)
+        self.assertEqual(m.state,'WAIT_FOR_TARGET')
+
     def test_reset_refused_while_unverified(self):
         m=self.mission()
         m.state='STOP_UNVERIFIED'
@@ -256,6 +264,44 @@ class TestCompleteMissionProtocol(unittest.TestCase):
         self.assertIsNone(g.active_navigation)
         self.assertIsNone(g.observation_deadline)
         self.assertFalse(getattr(g,'base_done',False))
+
+    def lease_guard(self, episode='old'):
+        g=Guard.__new__(Guard)
+        g.get_clock=lambda: NS(now=lambda: NS(nanoseconds=100_000_000_000))
+        g.lease_timeout=.6
+        g.lease=dict(boot='mission',stamp=100.,state='WAIT_FOR_TARGET',
+                     episode=episode)
+        g.lease_receipt=0.
+        g.mission_state='WAIT_FOR_TARGET'
+        g.unknown_terminal=False
+        g.decision_serial=0
+        g.active_plan=None
+        g.memory=Mock()
+        g.observation_deadline=None
+        g._cancel=Mock()
+        g.navigation_goal_count=1
+        g.operator_cancel_requested=True
+        g.finished=g.busy=True
+        return g
+
+    def test_new_episode_rearms_while_waiting_for_target(self):
+        g=self.lease_guard()
+        msg=NS(data=json.dumps(dict(
+            boot='mission',stamp=100.,state='WAIT_FOR_TARGET',episode='new')))
+        g._lease_cb(msg)
+        self.assertEqual(g.navigation_goal_count,0)
+        self.assertFalse(g.operator_cancel_requested)
+        self.assertFalse(g.finished)
+        self.assertFalse(g.busy)
+
+    def test_same_episode_does_not_rearm_operator_stop(self):
+        g=self.lease_guard()
+        msg=NS(data=json.dumps(dict(
+            boot='mission',stamp=100.,state='WAIT_FOR_TARGET',episode='old')))
+        g._lease_cb(msg)
+        self.assertEqual(g.navigation_goal_count,1)
+        self.assertTrue(g.operator_cancel_requested)
+        self.assertTrue(g.finished)
 
 
 if __name__ == '__main__':
