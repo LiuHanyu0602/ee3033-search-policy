@@ -1,4 +1,5 @@
 """Typed localization candidate producer; no nav, no legacy /target_position."""
+from collections import deque
 import json
 from pathlib import Path
 import math
@@ -7,12 +8,16 @@ import rclpy
 from rclpy.node import Node
 from rclpy.time import Time
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
-from sensor_msgs.msg import CameraInfo
+from sensor_msgs.msg import CameraInfo, LaserScan
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener, TransformException
 from ee3033_search_policy_interfaces.msg import TargetObservation, TargetEstimate
 from .yolo_bearing import RawCameraCalibration
-from .stamped_localization import LocalizationMemory, map_ground_point, rotation_from_quaternion
+from .stamped_localization import (
+    LocalizationMemory, choose_gated_point, map_ground_point,
+    rotation_from_quaternion,
+)
+from .target_localization_core import robust_lidar_range, undistort_normalized
 
 
 class StampedTargetLocalizer(Node):
@@ -21,7 +26,12 @@ class StampedTargetLocalizer(Node):
         defaults = {'calibration_file': '', 'geometry_verified': False,
                     'assume_ground_contact': False, 'ground_z_m': 0.,
                     'map_frame': 'map', 'camera_info_topic': '/camera_info',
-                    'maximum_age_s': .5, 'minimum_range_m': .15, 'maximum_range_m': 4.}
+                    'scan_topic': '/scan', 'range_mode': 'lidar_then_ground',
+                    'maximum_age_s': .5, 'minimum_range_m': .15, 'maximum_range_m': 4.,
+                    'scan_max_age_s': .75, 'scan_sync_tolerance_s': .12,
+                    'scan_window_rad': .05236, 'minimum_lidar_points': 2,
+                    'lidar_ground_gate_m': .35, 'laser_yaw_offset_rad': 0.,
+                    'scan_buffer_size': 50, 'minimum_range_observations': 5}
         for k, v in defaults.items():
             self.declare_parameter(k, v)
         p = lambda k: self.get_parameter(k).value
@@ -29,9 +39,30 @@ class StampedTargetLocalizer(Node):
         self.verified, self.ground_enabled = bool(p('geometry_verified')), bool(p('assume_ground_contact'))
         self.ground_z, self.frame = float(p('ground_z_m')), str(p('map_frame'))
         self.age, self.rmin, self.rmax = map(float, (p('maximum_age_s'), p('minimum_range_m'), p('maximum_range_m')))
-        if not all(math.isfinite(x) for x in (self.ground_z, self.age, self.rmin, self.rmax)) or not 0 < self.rmin < self.rmax or self.age <= 0:
+        self.range_mode = str(p('range_mode'))
+        self.scan_age = float(p('scan_max_age_s'))
+        self.scan_sync = float(p('scan_sync_tolerance_s'))
+        self.scan_window = float(p('scan_window_rad'))
+        self.minimum_lidar_points = int(p('minimum_lidar_points'))
+        self.lidar_ground_gate = float(p('lidar_ground_gate_m'))
+        self.laser_yaw_offset = float(p('laser_yaw_offset_rad'))
+        scan_buffer_size = int(p('scan_buffer_size'))
+        minimum_range_observations = int(p('minimum_range_observations'))
+        if (not all(math.isfinite(x) for x in
+                    (self.ground_z, self.age, self.rmin, self.rmax,
+                     self.scan_age, self.scan_sync, self.scan_window,
+                     self.lidar_ground_gate, self.laser_yaw_offset)) or
+                not 0 < self.rmin < self.rmax or self.age <= 0 or
+                min(self.scan_age, self.scan_sync, self.scan_window,
+                    self.lidar_ground_gate) <= 0 or
+                self.range_mode not in ('ground_only', 'lidar_only', 'lidar_then_ground') or
+                self.minimum_lidar_points < 1 or scan_buffer_size < 2 or
+                minimum_range_observations < 1):
             raise ValueError('Invalid geometry limits')
-        self.memory = LocalizationMemory(range_min=self.rmin, range_max=self.rmax)
+        self.memory = LocalizationMemory(
+            range_min=self.rmin, range_max=self.rmax,
+            minimum_range_observations=minimum_range_observations)
+        self.scans = deque(maxlen=scan_buffer_size)
         self.camera = None
         self.last_clock = None
         self.last_calibration_signature = None
@@ -48,6 +79,8 @@ class StampedTargetLocalizer(Node):
         self.create_subscription(String, '/target/localization_reset', self._reset, latched)
         self.create_subscription(
             CameraInfo, str(p('camera_info_topic')), self._camera, realtime)
+        self.create_subscription(
+            LaserScan, str(p('scan_topic')), self._scan, realtime)
         self.create_subscription(
             TargetObservation, '/target/observation', self._observation, realtime)
         self.status.publish(String(data='WAITING_FOR_VERIFIED_GEOMETRY'))
@@ -88,6 +121,57 @@ class StampedTargetLocalizer(Node):
             self.camera = None
             self.memory.configure('', -1, '')
 
+    def _scan(self, msg):
+        stamp = msg.header.stamp.sec+msg.header.stamp.nanosec*1e-9
+        if (math.isfinite(stamp) and stamp > 0 and msg.header.frame_id and
+                len(msg.ranges) > 0 and math.isfinite(msg.angle_min) and
+                math.isfinite(msg.angle_increment) and msg.angle_increment != 0):
+            self.scans.append((stamp, msg))
+
+    def _matched_scan(self, image_stamp, now):
+        candidates = [(abs(stamp-image_stamp), stamp, scan)
+                      for stamp, scan in self.scans
+                      if 0 <= now-stamp <= self.scan_age]
+        if not candidates:
+            return None
+        delta, _, scan = min(candidates, key=lambda row: row[0])
+        return scan if delta <= self.scan_sync else None
+
+    def _lidar_point(self, image_stamp, now, map_direction):
+        if self.range_mode == 'ground_only':
+            return None
+        scan = self._matched_scan(image_stamp, now)
+        if scan is None:
+            return None
+        try:
+            transform = self.buffer.lookup_transform(
+                self.frame, scan.header.frame_id, Time.from_msg(scan.header.stamp))
+        except TransformException:
+            # In lidar_then_ground mode a missing scan transform is equivalent
+            # to an unavailable LiDAR sample; calibrated vision may still
+            # provide the explicitly configured fallback.
+            return None
+        q, t = transform.transform.rotation, transform.transform.translation
+        rotation = rotation_from_quaternion(q.x, q.y, q.z, q.w)
+        scan_direction = rotation.T @ np.asarray(map_direction, dtype=float)
+        if np.linalg.norm(scan_direction[:2]) < 1e-9:
+            return None
+        bearing = math.atan2(scan_direction[1], scan_direction[0])-self.laser_yaw_offset
+        angles = scan.angle_min+np.arange(len(scan.ranges))*scan.angle_increment
+        scan_min = max(self.rmin, float(scan.range_min))
+        scan_max = min(self.rmax, float(scan.range_max))
+        if not math.isfinite(scan_min) or not math.isfinite(scan_max) or scan_min >= scan_max:
+            return None
+        distance = robust_lidar_range(
+            scan.ranges, angles, bearing, self.scan_window, scan_min, scan_max,
+            minimum_points=self.minimum_lidar_points)
+        if distance is None:
+            return None
+        scan_point = np.array([
+            distance*math.cos(bearing), distance*math.sin(bearing), 0.])
+        map_point = np.array([t.x, t.y, t.z])+rotation@scan_point
+        return map_point[:2] if np.all(np.isfinite(map_point)) else None
+
     def _observation(self, msg):
         now = self.get_clock().now().nanoseconds*1e-9
         if self.last_clock is not None and now < self.last_clock:
@@ -120,7 +204,6 @@ class StampedTargetLocalizer(Node):
             def ray(x, y):
                 angle = self.calibration.bearing(x, y)  # checks inverse-distortion convergence
                 c = self.calibration.camera
-                from .target_localization_core import undistort_normalized
                 xy = undistort_normalized((x-c.cx)/c.fx, (y-c.cy)/c.fy,
                                           c.distortion, iterations=100)
                 r = np.array([math.tan(angle), xy[1], 1.])
@@ -129,7 +212,11 @@ class StampedTargetLocalizer(Node):
             ground = map_ground_point(origin, ray(u, v), self.ground_z,
                                       self.rmin, self.rmax) if self.ground_enabled else None
             stamp = msg.header.stamp.sec+msg.header.stamp.nanosec*1e-9
-            self.memory.add(stamp, origin, centre, ground, msg.confidence, msg.tracking_id)
+            lidar = self._lidar_point(stamp, now, centre)
+            range_point, source = choose_gated_point(
+                ground, lidar, self.lidar_ground_gate, self.range_mode)
+            self.memory.add(stamp, origin, centre, range_point, msg.confidence,
+                            msg.tracking_id, source)
             point, covariance, method = self.memory.estimate()
             if point is None:
                 raise ValueError(method)
