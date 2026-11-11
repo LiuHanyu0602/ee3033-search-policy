@@ -46,6 +46,9 @@ After `DONE`, the workflow automatically:
 
 - captures the SLAM-frame start pose;
 - saves and hashes the new map;
+- removes only isolated occupied pixels whose other 24 cells in a complete
+  5x5 neighborhood are all known free, retaining the original as
+  `<map-prefix>.raw.pgm`;
 - stops SLAM and starts known-map Nav2 with that map;
 - publishes the captured pose to AMCL and verifies localization;
 - starts the timestamp-correct 30 Hz camera and `/camera/image_raw` remap;
@@ -98,3 +101,16 @@ fail-closed.
 - camera device: `/dev/video0`.
 
 Missing dependencies or duplicate robot nodes stop the workflow before motion.
+
+## Conservative saved-map cleanup
+
+The cleanup runs after `map_saver_cli` succeeds and before the new map is
+loaded by Nav2. It uses `negate`, `occupied_thresh`, and `free_thresh` from the
+saved YAML rather than assuming raw black/white values. Unknown cells are not
+treated as free. Border cells, walls, connected obstacle pixels, and any cell
+with an occupied or unknown neighbor in its 5x5 window are retained.
+
+The cleaned PGM remains the YAML's active image. The untouched raster is stored
+as `<map-prefix>.raw.pgm`; the run JSON records both hashes and the number of
+removed cells. Live Nav2 obstacle layers continue to mark obstacles seen by the
+LiDAR even if an isolated static-map speckle was removed.

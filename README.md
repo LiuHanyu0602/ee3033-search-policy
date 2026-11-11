@@ -833,6 +833,10 @@ manual SLAM, map saving, known-map Nav2 startup, AMCL initialization, camera,
 NCNN YOLO, MLP search, stamped target localization, and return to the captured
 mapping start pose.
 
+Before loading the saved map, the workflow conservatively removes a singleton
+occupied pixel only when all other 24 cells in its complete 5x5 neighborhood
+are known free. The original raster is retained as `<map-prefix>.raw.pgm`.
+
 ```bash
 /home/ros2_ws/src/ee3033-search-policy/scripts/run_real_robot_workflow.sh \
   --map-prefix /home/ros2_ws/src/ee3033-search-policy/maps/map_run_YYYYMMDD_HHMM \

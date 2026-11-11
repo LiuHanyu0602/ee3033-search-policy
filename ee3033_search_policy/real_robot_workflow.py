@@ -37,6 +37,7 @@ from .workflow_support import (
     PlanarPose,
     TERMINAL_MISSION_STATES,
     angular_error,
+    clean_isolated_occupied_pixels,
     file_sha256,
     saved_map_files,
     validate_new_map_prefix,
@@ -600,17 +601,24 @@ class RealRobotWorkflow:
         if result.returncode != 0:
             raise WorkflowError('Map saver failed:\n'+result.stdout[-3000:])
         yaml_path, pgm_path = saved_map_files(self.map_prefix)
+        cleanup = clean_isolated_occupied_pixels(yaml_path, pgm_path)
+        # Revalidate the rewritten map before any map server can consume it.
+        saved_map_files(self.map_prefix)
         self.summary['map'] = {
             'yaml': str(yaml_path),
             'pgm': str(pgm_path),
             'yaml_sha256': file_sha256(yaml_path),
-            'pgm_sha256': file_sha256(pgm_path),
+            'pgm_sha256': cleanup.cleaned_sha256,
+            'raw_pgm': str(cleanup.raw_path),
+            'raw_pgm_sha256': cleanup.raw_sha256,
+            'isolated_occupied_cells_removed': cleanup.removed,
         }
         self.summary['status'] = 'MAP_SAVED'
         self._write_summary()
         self.info(
             f"map saved: yaml_sha256={self.summary['map']['yaml_sha256']}, "
-            f"pgm_sha256={self.summary['map']['pgm_sha256']}")
+            f"pgm_sha256={self.summary['map']['pgm_sha256']}, "
+            f"isolated_cells_removed={cleanup.removed}")
 
     def _write_summary(self):
         temporary = Path(str(self.summary_path)+'.tmp')
