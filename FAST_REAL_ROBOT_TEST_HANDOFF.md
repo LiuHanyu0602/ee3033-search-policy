@@ -42,12 +42,6 @@ Verified on the robot on 2026-11-06:
 - target classes come from `config/yolo_ncnn_coco80_labels.json`;
 - target selection is typed service `/target/set_class`, not hard-coded bottle.
 
-The current post-stop accuracy experiment also restores timestamp-matched
-LiDAR–visual range fusion in the typed localizer and raises the ranging window
-to at least five valid raw frames. See `LIDAR_VISUAL_LOCALIZATION_UPDATE.md`.
-This does not change the already validated one-frame stop trigger in the robot
-overlay.
-
 Example deployed JSON:
 
 ```json

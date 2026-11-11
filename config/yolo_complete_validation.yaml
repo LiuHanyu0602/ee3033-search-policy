@@ -69,21 +69,7 @@ stamped_target_localizer:
     geometry_verified: false
     assume_ground_contact: false
     camera_info_topic: /camera_info
-    scan_topic: /scan
     map_frame: map
-    # Parking/confirmation remains a separate adapter decision. Localization
-    # fuses only scans close to each original image stamp.
-    range_mode: lidar_then_ground
     maximum_age_s: 0.5
     minimum_range_m: 0.15
     maximum_range_m: 4.0
-    scan_max_age_s: 0.75
-    scan_sync_tolerance_s: 0.12
-    scan_window_rad: 0.05236
-    minimum_lidar_points: 2
-    lidar_ground_gate_m: 0.35
-    laser_yaw_offset_rad: 0.0
-    scan_buffer_size: 50
-    # Five valid raw range frames followed by the coordinator's existing three
-    # consistent candidate reports require about seven post-stop source frames.
-    minimum_range_observations: 5
