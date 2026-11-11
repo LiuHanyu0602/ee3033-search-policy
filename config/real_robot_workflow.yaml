@@ -1,0 +1,76 @@
+euler_camera_tf:
+  ros__parameters:
+    euler_topic: /robot_euler
+    parent_frame: base_footprint
+    child_frame: ee3033_balance_body
+    expected_source_frame: base_footprint
+    roll_scale: 1.0
+    pitch_scale: 1.0
+    roll_offset_rad: 0.0
+    pitch_offset_rad: 0.0
+
+# Physical-robot values reproduced from the successful 2026-11-11 run.
+# Navigation itself still requires the explicit command-line opt-in handled by
+# real_robot_workflow.py; this file alone does not authorize motion.
+search_manager:
+  ros__parameters:
+    navigation_enabled: false
+    single_goal_mode: false
+    max_navigation_goals: 100
+    return_home_enabled: false
+    exclusive_navigation_verified: true
+    robot_geometry_verified: true
+    scan_topic: /scan
+    lease_timeout_s: 0.6
+    tf_max_age_s: 0.3
+    scan_max_age_s: 0.5
+    observation_position_tolerance_m: 0.15
+    observation_yaw_tolerance_rad: 0.30
+
+target_mission_coordinator:
+  ros__parameters:
+    odom_topic: /odom
+    odom_frame: odom_combined
+    motion_interrupt_verified: true
+    dynamic_camera_tf_verified: true
+    stop_timeout_s: 12.0
+    localization_timeout_s: 15.0
+    mission_timeout_s: 300.0
+    input_max_age_s: 0.5
+    # A short detector-only grace prevents one rejected NCNN frame from
+    # canceling a healthy Nav2 goal. Runtime/TF/scan faults remain fail-fast.
+    detector_fault_grace_s: 0.75
+    maximum_variance_m2: 0.25
+    minimum_report_frames: 3
+    report_consistency_m: 0.10
+    motion_interrupt_horizon_s: 0.5
+    motion_interrupt_max_age_s: 0.3
+    motion_interrupt_max_gap_s: 0.2
+    motion_interrupt_max_translation_m: 0.15
+    motion_interrupt_max_rotation_rad: 0.35
+
+yolo_detection_adapter:
+  ros__parameters:
+    labels_file: ''
+    input_format: ncnn_json
+    detections_topic: /yolo/detections
+    camera_info_topic: /camera_info
+    geometry_verified: true
+    # One fresh frame stops navigation, matching the successful physical run.
+    required_frames: 1
+    # Source continuity is tolerant; target observations and localization below
+    # remain limited to 0.5 s and therefore never use these older frames.
+    max_age_s: 1.5
+    max_gap_s: 0.4
+    minimum_iou: 0.2
+
+stamped_target_localizer:
+  ros__parameters:
+    calibration_file: ''
+    geometry_verified: true
+    assume_ground_contact: true
+    camera_info_topic: /camera_info
+    map_frame: map
+    maximum_age_s: 0.5
+    minimum_range_m: 0.15
+    maximum_range_m: 4.0

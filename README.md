@@ -824,3 +824,22 @@ procedure. `/search/reset_memory` refuses to rearm while the mission is `SEARCHI
 `PAUSED`. First reset or finish the mission, verify that no navigation is
 active, and then reset memory. Pause/resume preserves the current navigation
 goal count.
+
+
+## One-command mapped real-robot workflow
+
+The verified interactive entry now owns the complete physical sequence:
+manual SLAM, map saving, known-map Nav2 startup, AMCL initialization, camera,
+NCNN YOLO, MLP search, stamped target localization, and return to the captured
+mapping start pose.
+
+```bash
+/home/ros2_ws/src/ee3033-search-policy/scripts/run_real_robot_workflow.sh \
+  --map-prefix /home/ros2_ws/src/ee3033-search-policy/maps/map_run_YYYYMMDD_HHMM \
+  --navigation-enabled true
+```
+
+The map prefix must be new. See
+[`docs/REAL_ROBOT_ONE_COMMAND_WORKFLOW.md`](docs/REAL_ROBOT_ONE_COMMAND_WORKFLOW.md)
+for the three operator prompts, exact reproduced parameters, recovery behavior,
+logs, and build command.

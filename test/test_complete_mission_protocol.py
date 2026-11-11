@@ -59,6 +59,8 @@ class TestCompleteMissionProtocol(unittest.TestCase):
         m.odom_healthy=True
         m.terminal_seen=False
         m._runtime_fresh=lambda: True
+        m._runtime_ready=lambda: True
+        m._detector_ready=lambda: True
         m._source_ready=lambda: True
         m.runtime={}
         m.last_clock=None
@@ -71,6 +73,8 @@ class TestCompleteMissionProtocol(unittest.TestCase):
         m.found_pub=Mock()
         m.boot='m'
         m.search_deadline=None
+        m.detector_fault_grace=.75
+        m.detector_unready_since=None
         m.stop_token=''
         m.variance=.25
         m.consistency=.1
@@ -216,6 +220,29 @@ class TestCompleteMissionProtocol(unittest.TestCase):
         response=m._start_search(None,NS())
         self.assertFalse(response.success)
         self.assertEqual(m.state,'WAIT_FOR_TARGET')
+
+    def test_transient_detector_stall_uses_bounded_grace(self):
+        m=self.mission()
+        ready=[False]
+        m._detector_ready=lambda: ready[0]
+        self.assertFalse(m._detector_fault_expired(10.0))
+        self.assertFalse(m._detector_fault_expired(10.5))
+        ready[0]=True
+        self.assertFalse(m._detector_fault_expired(10.6))
+        self.assertIsNone(m.detector_unready_since)
+
+    def test_sustained_detector_stall_expires_grace(self):
+        m=self.mission()
+        m._detector_ready=lambda: False
+        self.assertFalse(m._detector_fault_expired(10.0))
+        self.assertTrue(m._detector_fault_expired(10.8))
+
+    def test_runtime_fault_remains_fail_fast(self):
+        m=self.mission()
+        m._runtime_ready=lambda: False
+        m._tick()
+        self.assertEqual(m.state,'STOPPING')
+        self.assertEqual(m.stop_purpose,'FAULT')
 
     def test_reset_refused_while_unverified(self):
         m=self.mission()

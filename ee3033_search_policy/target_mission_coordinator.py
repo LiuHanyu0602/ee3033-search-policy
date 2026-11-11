@@ -25,7 +25,7 @@ class TargetMissionCoordinator(Node):
                         stop_timeout_s=12., localization_timeout_s=15.,
                         input_max_age_s=.5, maximum_variance_m2=.25,
                         minimum_report_frames=3, report_consistency_m=.10,
-                        mission_timeout_s=300.)
+                        mission_timeout_s=300., detector_fault_grace_s=0.)
         for k, v in vars(MotionInterruptLimits()).items():
             defaults['motion_interrupt_'+k] = v
         for k, v in defaults.items():
@@ -43,9 +43,12 @@ class TargetMissionCoordinator(Node):
         self.required = int(p('minimum_report_frames'))
         self.consistency = float(p('report_consistency_m'))
         self.mission_timeout = float(p('mission_timeout_s'))
+        self.detector_fault_grace = float(p('detector_fault_grace_s'))
         if (not all(math.isfinite(v) and v > 0 for v in
                     (self.age,self.stop_timeout,self.loc_timeout,self.variance,
-                     self.consistency,self.mission_timeout)) or self.required < 1):
+                     self.consistency,self.mission_timeout)) or
+                not math.isfinite(self.detector_fault_grace) or
+                self.detector_fault_grace < 0 or self.required < 1):
             raise ValueError('Invalid mission limits')
         self.boot = str(uuid.uuid4())
         self.state, self.stop_token, self.stop_purpose = 'IDLE', '', ''
@@ -65,6 +68,7 @@ class TargetMissionCoordinator(Node):
         self.odom_healthy = False
         self.terminal_seen = False
         self.search_deadline = None
+        self.detector_unready_since = None
         self.last_clock = None
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -148,11 +152,33 @@ class TargetMissionCoordinator(Node):
                 0 <= self._now()-float(self.runtime['stamp']) <= self.age)
 
     def _source_ready(self):
+        return self._detector_ready() and self._runtime_ready()
+
+    def _detector_ready(self):
         return (self.config.get('configured') and self.config.get('episode_id') and
                 time.monotonic()-self.adapter_receipt <= self.age and
-                self.adapter_status in ('TARGET_CONFIGURED','TARGET_CONFIRMED') and
-                self._runtime_fresh() and self.runtime.get('ready') and
+                self.adapter_status in ('TARGET_CONFIGURED','TARGET_CONFIRMED'))
+
+    def _runtime_ready(self):
+        return (self._runtime_fresh() and self.runtime.get('ready') and
                 not self.runtime.get('operator_stop'))
+
+    def _detector_fault_expired(self, steady):
+        """Apply a bounded grace period only to detector freshness flicker."""
+        if self._detector_ready():
+            if self.detector_unready_since is not None:
+                duration = steady-self.detector_unready_since
+                self.get_logger().info(
+                    f'Detector source recovered after {duration:.3f}s; continuing search')
+            self.detector_unready_since = None
+            return False
+        if self.detector_unready_since is None:
+            self.detector_unready_since = steady
+            if self.detector_fault_grace > 0:
+                self.get_logger().warning(
+                    'Detector source temporarily unavailable; allowing '
+                    f'{self.detector_fault_grace:.3f}s recovery grace')
+        return steady-self.detector_unready_since >= self.detector_fault_grace
 
     def _odom(self, msg):
         q, p, v = msg.pose.pose.orientation, msg.pose.pose.position, msg.twist.twist
@@ -296,13 +322,19 @@ class TargetMissionCoordinator(Node):
             motion_monitor_reason=why,motion_monitor=metrics,
             motion_interrupt_verified=self.verified,odom_healthy=self.odom_healthy,
             camera_motion_tf_verified=self.camera_motion_verified,
-            runtime_fresh=self._runtime_fresh(),stop_token=self.stop_token))))
+            runtime_fresh=self._runtime_fresh(),
+            detector_ready=self._detector_ready(),
+            detector_unready_s=(0. if self.detector_unready_since is None else
+                                max(0.,steady-self.detector_unready_since)),
+            stop_token=self.stop_token))))
         if self.state == 'SEARCHING':
             if self.runtime.get('operator_stop'):
                 self._stop('OPERATOR')
             elif self.search_deadline is not None and steady >= self.search_deadline:
                 self._stop('TIMEOUT')
-            elif not self._source_ready():
+            elif not self._runtime_ready():
+                self._stop('FAULT')
+            elif self._detector_fault_expired(steady):
                 self._stop('FAULT')
             elif self.runtime.get('finished'):
                 self._stop('SEARCH_COMPLETE')
@@ -330,6 +362,8 @@ class TargetMissionCoordinator(Node):
                 self._state('LOCALIZATION_FAILED')
         elif self.state == 'TARGET_REPORTED':
             self._state('FINISHED')
+        if self.state != 'SEARCHING':
+            self.detector_unready_since = None
 
     def _response(self, response, success, message):
         response.success, response.message = bool(success), message
@@ -354,6 +388,7 @@ class TargetMissionCoordinator(Node):
             return self._response(response,False,'Require configured fresh detector, robot readiness, verified motion interrupt monitor and WAIT_FOR_TARGET')
         self.stop_token = ''
         self.search_deadline = time.monotonic()+self.mission_timeout
+        self.detector_unready_since = None
         self._state('SEARCHING')
         return self._response(response,True,'Search started with motion-interrupt monitoring; no extra motion authorization granted')
 
