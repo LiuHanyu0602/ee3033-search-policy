@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# ROS 2 Humble setup files are not safe under nounset: they intentionally read
+# AMENT_TRACE_SETUP_FILES before defining it. Enable nounset only after all
+# environment overlays have been sourced.
+set -eo pipefail
 
 source /opt/ros/humble/setup.bash
 source /home/ros2_ws/install/setup.bash
@@ -10,6 +13,8 @@ if [[ ! -f "$camera_overlay" ]]; then
   exit 1
 fi
 source "$camera_overlay"
+
+set -u
 
 export ROS_DOMAIN_ID=15
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
