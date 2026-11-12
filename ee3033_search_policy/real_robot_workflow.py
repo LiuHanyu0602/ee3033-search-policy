@@ -126,6 +126,8 @@ class WorkflowNode(Node):
         self.detection_receipts = deque(maxlen=60)
         self.mission_state = ''
         self.adapter_status = ''
+        self.localization_status = ''
+        self.localization_candidate = None
         self.runtime = {}
         self.estimate = None
         self.tf_buffer = Buffer()
@@ -149,6 +151,12 @@ class WorkflowNode(Node):
         self.create_subscription(
             String, '/target/adapter_status', self._adapter, latched_qos)
         self.create_subscription(
+            String, '/target/localization_status', self._localization_status,
+            latched_qos)
+        self.create_subscription(
+            TargetEstimate, '/target/estimate_candidate',
+            self._localization_candidate, realtime_qos)
+        self.create_subscription(
             String, '/search/runtime_state', self._runtime_callback, realtime_qos)
         self.create_subscription(
             TargetEstimate, '/target/estimate', self._estimate_callback, latched_qos)
@@ -171,6 +179,14 @@ class WorkflowNode(Node):
     def _adapter(self, msg):
         self.adapter_status = msg.data.strip().upper()
         self._touch('adapter')
+
+    def _localization_status(self, msg):
+        self.localization_status = msg.data.strip()
+        self._touch('localization_status')
+
+    def _localization_candidate(self, msg):
+        self.localization_candidate = msg
+        self._touch('localization_candidate')
 
     def _runtime_callback(self, msg):
         try:
@@ -654,12 +670,30 @@ class RealRobotWorkflow:
     def _wait_for_search_terminal(self, processes):
         deadline = time.monotonic()+self.args.search_timeout
         last_state = None
+        last_localization = None
+        last_candidate_stamp = None
         while time.monotonic() < deadline:
             self.assert_alive(processes)
             state = self.node.mission_state
             if state and state != last_state:
                 self.info(f'mission state: {state}')
                 last_state = state
+            localization = self.node.localization_status
+            if (state in ('ALIGNING_TARGET', 'LOCALIZING_TARGET') and
+                    localization and localization != last_localization):
+                self.info(f'localization status: {localization}')
+                last_localization = localization
+            candidate = self.node.localization_candidate
+            if candidate is not None and candidate.valid:
+                candidate_stamp = (
+                    candidate.header.stamp.sec, candidate.header.stamp.nanosec)
+                if candidate_stamp != last_candidate_stamp:
+                    self.info(
+                        f'localization candidate: method={candidate.method}, '
+                        f'x={candidate.position.x:.3f}, '
+                        f'y={candidate.position.y:.3f}, '
+                        f'reason={candidate.reason}')
+                    last_candidate_stamp = candidate_stamp
             if state in TERMINAL_MISSION_STATES:
                 return state
             time.sleep(0.2)
@@ -684,6 +718,22 @@ class RealRobotWorkflow:
             rclpy.shutdown()
 
     def _verify_stopped_before_shutdown(self):
+        if self.node.mission_state == 'ALIGNING_TARGET':
+            self.info('canceling active target-alignment Spin before shutdown')
+            try:
+                self.node.call_trigger('/target/cancel_alignment', timeout=10.0)
+            except WorkflowError as exc:
+                self.info(f'alignment cancel request failed: {exc}')
+                return False
+            deadline = time.monotonic()+15.0
+            while time.monotonic() < deadline:
+                if self.node.mission_state == 'OPERATOR_STOPPED':
+                    break
+                if self.node.mission_state == 'STOP_UNVERIFIED':
+                    return False
+                time.sleep(0.1)
+            else:
+                return False
         handle = self.node.active_return_handle
         if handle is not None:
             self.info('canceling active return-home goal before shutdown')

@@ -8,7 +8,8 @@ class ObservationSession(AdapterSession):
     def _accept_source(self, stamp, frame_id, ros_now, steady_now):
         state = self.state
         # No first confirmation outside SEARCHING; no source timestamp rewriting.
-        if self.frames.confirmed and state in ('STOPPING_FOR_TARGET', 'LOCALIZING_TARGET'):
+        if self.frames.confirmed and state in (
+                'STOPPING_FOR_TARGET', 'ALIGNING_TARGET', 'LOCALIZING_TARGET'):
             self.state = 'SEARCHING'
             try:
                 return super()._accept_source(stamp, frame_id, ros_now, steady_now)

@@ -14,7 +14,7 @@ from tf2_ros import Buffer, TransformListener, TransformException
 from ee3033_search_policy_interfaces.msg import TargetObservation, TargetEstimate
 from .yolo_bearing import RawCameraCalibration
 from .stamped_localization import (
-    LocalizationMemory, choose_gated_point, map_ground_point,
+    LocalizationMemory, bbox_requires_lidar, choose_gated_point, map_ground_point,
     rotation_from_quaternion,
 )
 from .target_localization_core import robust_lidar_range, undistort_normalized
@@ -188,10 +188,10 @@ class StampedTargetLocalizer(Node):
             values = (msg.center_x, msg.center_y, msg.width, msg.height, msg.confidence)
             if not all(math.isfinite(v) for v in values) or not 0 < msg.confidence <= 1 or min(msg.width, msg.height) <= 0:
                 raise ValueError('INVALID_OBSERVATION')
-            u, v = msg.center_x, msg.center_y+msg.height/2
-            if (msg.center_x-msg.width/2 < 0 or msg.center_x+msg.width/2 >= msg.image_width or
-                    msg.center_y-msg.height/2 < 0 or v >= msg.image_height):
-                raise ValueError('BBOX_CLIPPED_OR_OUTSIDE_IMAGE')
+            vertical_boundary = bbox_requires_lidar(
+                msg.center_x, msg.center_y, msg.width, msg.height,
+                msg.image_width, msg.image_height)
+            y2 = msg.center_y+msg.height/2
             # Zero timeout: never block ROS callbacks waiting for TF. No latest-TF fallback.
             tf = self.buffer.lookup_transform(self.frame, msg.header.frame_id,
                                                Time.from_msg(msg.header.stamp))
@@ -206,12 +206,22 @@ class StampedTargetLocalizer(Node):
                 r = np.array([math.tan(angle), xy[1], 1.])
                 return rotation @ (r/np.linalg.norm(r))
             centre = ray(msg.center_x, msg.center_y)
-            ground = map_ground_point(origin, ray(u, v), self.ground_z,
-                                      self.rmin, self.rmax) if self.ground_enabled else None
+            ground = None
+            if self.ground_enabled and not vertical_boundary:
+                ground = map_ground_point(
+                    origin, ray(msg.center_x, y2), self.ground_z,
+                    self.rmin, self.rmax)
             stamp = msg.header.stamp.sec+msg.header.stamp.nanosec*1e-9
             lidar = self._lidar_point(stamp, now, centre)
-            range_point, source = choose_gated_point(
-                ground, lidar, self.lidar_ground_gate, self.range_mode)
+            if vertical_boundary:
+                range_point, source = choose_gated_point(
+                    None, lidar, self.lidar_ground_gate, 'lidar_only')
+                if range_point is None:
+                    raise ValueError('BBOX_VERTICAL_BOUNDARY_REQUIRES_LIDAR')
+                source = 'lidar_vertical_bbox_boundary'
+            else:
+                range_point, source = choose_gated_point(
+                    ground, lidar, self.lidar_ground_gate, self.range_mode)
             self.memory.add(stamp, origin, centre, range_point, msg.confidence,
                             msg.tracking_id, source)
             point, covariance, method = self.memory.estimate()

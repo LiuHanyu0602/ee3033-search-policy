@@ -33,6 +33,19 @@ def map_ground_point(origin, direction, ground_z, minimum_range=.15,
     return point[:2] if minimum_range <= distance <= maximum_range else None
 
 
+def bbox_requires_lidar(cx, cy, width, height, image_width, image_height):
+    """Accept vertical boundary contact for LiDAR-only ranging."""
+    values = (cx, cy, width, height, image_width, image_height)
+    if (not all(math.isfinite(float(value)) for value in values) or
+            min(width, height, image_width, image_height) <= 0):
+        raise ValueError('INVALID_BBOX_GEOMETRY')
+    x1, x2 = cx-width/2, cx+width/2
+    y1, y2 = cy-height/2, cy+height/2
+    if x1 < 0 or x2 >= image_width or y1 < 0 or y2 > image_height:
+        raise ValueError('BBOX_OUTSIDE_IMAGE_OR_HORIZONTAL_BOUNDARY')
+    return y1 <= 0 or y2 >= image_height
+
+
 def choose_gated_point(ground_point, lidar_point, gate_m=.35,
                        mode='lidar_then_ground'):
     """Choose a map-frame range point while rejecting likely wall returns."""
@@ -120,7 +133,9 @@ class LocalizationMemory:
         range_ready = len(points) >= self.minimum_range_observations
         fusion_points = list(points) if range_ready else []
         fusion_weights = list(weights) if range_ready else []
-        if any(s == 'lidar_ground_consistent' for s in sources):
+        if any(s == 'lidar_vertical_bbox_boundary' for s in sources):
+            method = 'lidar_vertical_bbox_boundary_fusion'
+        elif any(s == 'lidar_ground_consistent' for s in sources):
             method = 'lidar_visual_range_fusion'
         elif any(s == 'ground_lidar_rejected' for s in sources):
             method = 'ground_projection_fusion_lidar_rejected'

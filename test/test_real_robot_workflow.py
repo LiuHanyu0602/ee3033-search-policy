@@ -100,3 +100,7 @@ def test_workflow_contains_complete_owned_process_sequence():
     assert 'detector_fault_grace_s: 0.75' in config
     assert 'range_mode: lidar_then_ground' in config
     assert 'scan_sync_tolerance_s: 0.12' in config
+    assert 'target_alignment_enabled: true' in config
+    assert "'/target/localization_status'" in workflow
+    assert "'/target/estimate_candidate'" in workflow
+    assert 'localization candidate: method=' in workflow

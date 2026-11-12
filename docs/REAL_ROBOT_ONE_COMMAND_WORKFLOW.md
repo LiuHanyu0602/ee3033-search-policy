@@ -56,6 +56,9 @@ After `DONE`, the workflow automatically:
 - starts the continuous Tiny-MLP search runtime;
 - configures the operator-provided class and begins search;
 - waits for confirmed detection, verified Nav2 terminal state, and localization;
+- after the search goal reaches its matching terminal state, uses one bounded
+  Nav2 `/spin` action to turn toward the calibrated bbox bearing when the
+  target is outside the configured central deadband;
 - prints the final map coordinate;
 - sends one direct Nav2 goal back to the captured mapping start;
 - requires remote `SUCCEEDED` before reporting return completion.
@@ -87,6 +90,12 @@ pose, target episode, final estimate, return result, or the failure reason.
   floor: a nearby scan is preferred when it agrees with the calibrated camera
   ground projection, otherwise the camera projection is retained;
 - five valid range observations before a localization candidate is emitted;
+- bbox contact with the top or bottom image boundary disables camera ground
+  projection for that frame and requires a synchronized LiDAR return;
+- the operator console reports alignment state, localization rejection or
+  accumulation status, candidate method and final localization method;
+- interrupting the one-command workflow during alignment calls
+  `/target/cancel_alignment` and waits for the Spin remote terminal state;
 - continuous search, at most 100 navigation goals;
 - instructor Nav2 controller and costmap parameters are not overridden.
 

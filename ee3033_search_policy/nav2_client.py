@@ -9,8 +9,9 @@ from time import monotonic
 from typing import Callable, Generic, Optional, TypeVar
 
 from action_msgs.msg import GoalStatus
+from builtin_interfaces.msg import Duration
 from geometry_msgs.msg import PoseStamped
-from nav2_msgs.action import ComputePathToPose, NavigateToPose
+from nav2_msgs.action import ComputePathToPose, NavigateToPose, Spin
 from nav_msgs.msg import Path
 from rclpy.action import ActionClient
 from rclpy.action.client import ClientGoalHandle
@@ -44,6 +45,11 @@ class PathResult(ActionResult):
 @dataclass(frozen=True)
 class NavigationResult(ActionResult):
     """Navigation outcome, deliberately separate from a computed path."""
+
+
+@dataclass(frozen=True)
+class SpinResult(ActionResult):
+    """Collision-checked Nav2 behavior outcome for a relative yaw command."""
 
 
 ResultT = TypeVar("ResultT", bound=ActionResult)
@@ -397,3 +403,34 @@ class Nav2Client:
             self._planner.close()
             if self._navigator is not None:
                 self._navigator.close()
+
+
+class SpinClient:
+    """Single-owner client for Nav2's collision-checked relative Spin action."""
+
+    def __init__(self, node: Node, action_name: str = "/spin"):
+        self._channel = _ActionChannel(node, Spin, action_name, SpinResult)
+
+    def is_ready(self) -> bool:
+        return self._channel.client.server_is_ready()
+
+    def spin(
+        self, target_yaw: float, time_allowance_s: float,
+        timeout_s: float,
+    ) -> ActionRequest[SpinResult]:
+        values = (target_yaw, time_allowance_s, timeout_s)
+        if not all(isfinite(value) for value in values):
+            raise ValueError("Spin values must be finite")
+        if time_allowance_s <= 0 or timeout_s <= time_allowance_s:
+            raise ValueError("Spin timeout must exceed its positive time allowance")
+        seconds = int(time_allowance_s)
+        nanoseconds = int(round((time_allowance_s-seconds)*1_000_000_000))
+        if nanoseconds == 1_000_000_000:
+            seconds, nanoseconds = seconds+1, 0
+        goal = Spin.Goal()
+        goal.target_yaw = float(target_yaw)
+        goal.time_allowance = Duration(sec=seconds, nanosec=nanoseconds)
+        return self._channel.submit(goal, timeout_s, "odom")
+
+    def close(self):
+        self._channel.close()

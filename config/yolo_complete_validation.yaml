@@ -39,6 +39,13 @@ target_mission_coordinator:
     localization_timeout_s: 15.0
     mission_timeout_s: 300.0
     input_max_age_s: 0.5
+    # Non-actuating validation never sends a Spin action.
+    target_alignment_enabled: false
+    spin_action: /spin
+    alignment_deadband_rad: 0.17453
+    alignment_residual_rad: 0.17453
+    alignment_time_allowance_s: 8.0
+    alignment_action_timeout_s: 10.0
     maximum_variance_m2: 0.25
     minimum_report_frames: 3
     report_consistency_m: 0.10

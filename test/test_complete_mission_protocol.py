@@ -83,11 +83,20 @@ class TestCompleteMissionProtocol(unittest.TestCase):
         m.report_points=[]
         m.pending_report=None
         m.last_report_stamp=0.
+        m.alignment_enabled=False
+        m.alignment_deadband=.17453
+        m.alignment_residual=.17453
+        m.alignment_allowance=8.
+        m.alignment_timeout=10.
+        m.alignment_bearings=[]
+        m.alignment_request=None
+        m.spin=None
         return m
 
     def observation(self, episode='e'):
         return NS(confirmed=True,episode_id=episode,class_id=39,class_name='bottle',
-                  confidence=.9,header=NS(stamp=NS(sec=100,nanosec=0)))
+                  confidence=.9,bearing_rad=.4,
+                  header=NS(stamp=NS(sec=100,nanosec=0)))
 
     def estimate(self, ns=0):
         return NS(valid=True,header=NS(frame_id='map',stamp=NS(sec=100,nanosec=ns)),
@@ -107,6 +116,55 @@ class TestCompleteMissionProtocol(unittest.TestCase):
         m=self.mission()
         m._observation(self.observation('old'))
         self.assertEqual(m.state,'SEARCHING')
+
+    def test_detection_aligns_with_spin_after_navigation_terminal(self):
+        m=self.mission()
+        m.alignment_enabled=True
+        result_ready=[False]
+        result=NS(success=True,timed_out=False,status=4,error='',latency_s=.8)
+        request=NS(future=NS(done=lambda: result_ready[0],result=lambda: result))
+        m.spin=Mock()
+        m.spin.is_ready.return_value=True
+        m.spin.spin.return_value=request
+        m._observation(self.observation())
+        self.assertEqual(m.state,'ALIGNING_TARGET')
+        m.runtime=dict(stop_token=m.stop_token,quiescent=True,unknown_terminal=False)
+        m._tick()
+        expected=-(.4-m.alignment_residual)
+        m.spin.spin.assert_called_once_with(expected,8.,10.)
+        result_ready[0]=True
+        m._tick()
+        self.assertEqual(m.state,'LOCALIZING_TARGET')
+        self.assertEqual(m.localization_reset_pub.publish.call_count,1)
+
+    def test_alignment_deadband_skips_spin(self):
+        m=self.mission()
+        m.alignment_enabled=True
+        m.spin=Mock()
+        observation=self.observation()
+        observation.bearing_rad=.1
+        m._observation(observation)
+        m.runtime=dict(stop_token=m.stop_token,quiescent=True,unknown_terminal=False)
+        m._tick()
+        self.assertEqual(m.state,'LOCALIZING_TARGET')
+        m.spin.spin.assert_not_called()
+
+    def test_image_left_bearing_produces_positive_ros_yaw(self):
+        m=self.mission()
+        m.alignment_bearings=[-.4]
+        angle, bearing=m._alignment_angle()
+        self.assertEqual(bearing,-.4)
+        self.assertAlmostEqual(angle,.4-m.alignment_residual)
+
+    def test_active_alignment_cancel_waits_for_action_terminal(self):
+        m=self.mission()
+        m.state='ALIGNING_TARGET'
+        m.alignment_cancel_requested=False
+        m.alignment_request=Mock()
+        response=m._cancel_alignment(None,NS())
+        self.assertTrue(response.success)
+        self.assertTrue(m.alignment_cancel_requested)
+        m.alignment_request.cancel.assert_called_once()
 
     def test_old_stop_ack_cannot_advance(self):
         m=self.mission()
@@ -261,7 +319,8 @@ class TestCompleteMissionProtocol(unittest.TestCase):
         return g
 
     def test_late_planning_result_cannot_dispatch_after_stop(self):
-        for state in ('STOPPING_FOR_TARGET','PAUSED','IDLE','LOCALIZING_TARGET'):
+        for state in ('STOPPING_FOR_TARGET','PAUSED','IDLE','ALIGNING_TARGET',
+                      'LOCALIZING_TARGET'):
             g=self.guard()
             g.mission_state=state
             g._choose()

@@ -226,6 +226,16 @@ distinguishes `lidar_visual_range_fusion`,
 test configuration; validate the synchronization tolerance and gate against
 recorded real-robot data before treating them as final calibration.
 
+After first-frame confirmation, the one-command workflow cancels the active
+NavigateToPose goal and waits for its matching remote terminal state. It then
+uses the active Nav2 `/spin` server for one target-alignment turn based on the
+calibrated bbox bearing. There is no explicit software angle cap; the accepted
+bbox and camera field of view bound the input. A 0.17453 rad central deadband
+and residual offset avoid demanding exact centering. Localization history is
+reset after the Spin terminal result. Top/bottom bbox boundary contact is
+LiDAR-only and is reported as `lidar_vertical_bbox_boundary_fusion` when
+successful.
+
 After one manual run succeeds, implement `real_search.launch.py` with arguments:
 
 ```text

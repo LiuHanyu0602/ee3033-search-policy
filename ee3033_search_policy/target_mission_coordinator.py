@@ -4,6 +4,8 @@ import math
 import time
 import uuid
 import rclpy
+from action_msgs.msg import GoalStatus
+from action_msgs.msg import GoalStatus
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from geometry_msgs.msg import PointStamped
@@ -14,6 +16,7 @@ from ee3033_search_policy_interfaces.msg import TargetObservation, TargetEstimat
 from .balance_observation_gate import (
     MotionInterruptGate, MotionInterruptLimits, estimate_is_reportable,
 )
+from .nav2_client import SpinClient
 
 
 class TargetMissionCoordinator(Node):
@@ -25,7 +28,12 @@ class TargetMissionCoordinator(Node):
                         stop_timeout_s=12., localization_timeout_s=15.,
                         input_max_age_s=.5, maximum_variance_m2=.25,
                         minimum_report_frames=3, report_consistency_m=.10,
-                        mission_timeout_s=300., detector_fault_grace_s=0.)
+                        mission_timeout_s=300., detector_fault_grace_s=0.,
+                        target_alignment_enabled=False, spin_action='/spin',
+                        alignment_deadband_rad=.17453,
+                        alignment_residual_rad=.17453,
+                        alignment_time_allowance_s=8.,
+                        alignment_action_timeout_s=10.)
         for k, v in vars(MotionInterruptLimits()).items():
             defaults['motion_interrupt_'+k] = v
         for k, v in defaults.items():
@@ -44,12 +52,23 @@ class TargetMissionCoordinator(Node):
         self.consistency = float(p('report_consistency_m'))
         self.mission_timeout = float(p('mission_timeout_s'))
         self.detector_fault_grace = float(p('detector_fault_grace_s'))
+        self.alignment_enabled = bool(p('target_alignment_enabled'))
+        self.alignment_deadband = float(p('alignment_deadband_rad'))
+        self.alignment_residual = float(p('alignment_residual_rad'))
+        self.alignment_allowance = float(p('alignment_time_allowance_s'))
+        self.alignment_timeout = float(p('alignment_action_timeout_s'))
         if (not all(math.isfinite(v) and v > 0 for v in
                     (self.age,self.stop_timeout,self.loc_timeout,self.variance,
                      self.consistency,self.mission_timeout)) or
                 not math.isfinite(self.detector_fault_grace) or
-                self.detector_fault_grace < 0 or self.required < 1):
+                self.detector_fault_grace < 0 or self.required < 1 or
+                not all(math.isfinite(v) and v >= 0 for v in
+                        (self.alignment_deadband, self.alignment_residual)) or
+                not all(math.isfinite(v) and v > 0 for v in
+                        (self.alignment_allowance, self.alignment_timeout)) or
+                self.alignment_timeout <= self.alignment_allowance):
             raise ValueError('Invalid mission limits')
+        self.spin = SpinClient(self, str(p('spin_action'))) if self.alignment_enabled else None
         self.boot = str(uuid.uuid4())
         self.state, self.stop_token, self.stop_purpose = 'IDLE', '', ''
         self.config = {}
@@ -64,6 +83,9 @@ class TargetMissionCoordinator(Node):
         self.report_frames = 0
         self.report_points = []
         self.pending_report = None
+        self.alignment_bearings = []
+        self.alignment_request = None
+        self.alignment_cancel_requested = False
         self.localization_reset_count = 0
         self.odom_healthy = False
         self.terminal_seen = False
@@ -98,6 +120,8 @@ class TargetMissionCoordinator(Node):
                                ('pause',self._pause),('resume',self._resume),
                                ('finish',self._finish),('reset',self._reset)]:
             self.mission_services.append(self.create_service(Trigger, '/mission/'+name, callback))
+        self.cancel_alignment_service = self.create_service(
+            Trigger, '/target/cancel_alignment', self._cancel_alignment)
         self.create_timer(.1, self._tick)
         self.found_pub.publish(Bool(data=False))
         self._publish()
@@ -123,7 +147,8 @@ class TargetMissionCoordinator(Node):
         try:
             d = json.loads(msg.data)
             if d.get('episode_id') != self.config.get('episode_id'):
-                if self.state in ('SEARCHING','STOPPING_FOR_TARGET','LOCALIZING_TARGET','PAUSED'):
+                if self.state in ('SEARCHING','STOPPING_FOR_TARGET','ALIGNING_TARGET',
+                                  'LOCALIZING_TARGET','PAUSED'):
                     self._stop('FAULT')
                 self.config = d
                 self.report_frames, self.last_report_stamp = 0, 0.
@@ -199,20 +224,24 @@ class TargetMissionCoordinator(Node):
                                           dict(reason=why, metrics=metrics))
 
     def _observation(self, msg):
-        if self.state != 'SEARCHING':
-            return
         stamp = msg.header.stamp.sec+msg.header.stamp.nanosec*1e-9
-        if (msg.confirmed and msg.episode_id == self.config.get('episode_id') and
+        valid = (msg.confirmed and msg.episode_id == self.config.get('episode_id') and
                 msg.class_id == self.config.get('class_id') and
                 msg.class_name == self.config.get('class_name') and
                 math.isfinite(msg.confidence) and
                 msg.confidence >= self.config.get('min_confidence',1.) and
-                0 <= self._now()-stamp <= self.age):
+                math.isfinite(msg.bearing_rad) and
+                0 <= self._now()-stamp <= self.age)
+        if not valid:
+            return
+        if self.state == 'SEARCHING':
             self._state('TARGET_DETECTED')
-            self._begin_target_localization(stamp)
+            self._begin_target_alignment(stamp, msg.bearing_rad)
+        elif self.state == 'ALIGNING_TARGET' and len(self.alignment_bearings) < 5:
+            self.alignment_bearings.append(float(msg.bearing_rad))
 
-    def _begin_target_localization(self, observation_stamp):
-        """Start localization immediately while navigation cancellation proceeds."""
+    def _begin_target_alignment(self, observation_stamp, bearing):
+        """Cancel search navigation before an optional collision-checked turn."""
         self.stop_token, self.stop_purpose = str(uuid.uuid4()), 'TARGET'
         self.deadline = time.monotonic()+self.stop_timeout
         self.quiet_seen = False
@@ -221,7 +250,33 @@ class TargetMissionCoordinator(Node):
         self.report_frames, self.last_report_stamp = 0, 0.
         self.report_points = []
         self.pending_report = None
-        self._publish_localization_reset('TARGET_CONFIRMED', observation_stamp)
+        self.alignment_bearings = [float(bearing)]
+        self.alignment_request = None
+        self.alignment_cancel_requested = False
+        if self.alignment_enabled:
+            self._state('ALIGNING_TARGET')
+        else:
+            self._begin_target_localization('ALIGNMENT_DISABLED')
+
+    def _alignment_angle(self):
+        values = sorted(self.alignment_bearings)
+        bearing = values[len(values)//2]
+        if abs(bearing) <= self.alignment_deadband:
+            return 0., bearing
+        magnitude = max(0., abs(bearing)-self.alignment_residual)
+        # Camera optical bearing is positive toward image-right. ROS planar
+        # yaw is positive counter-clockwise, so the relative Spin sign is the
+        # opposite: a target on image-right requires a clockwise (negative) turn.
+        return -math.copysign(magnitude, bearing), bearing
+
+    def _begin_target_localization(self, reason):
+        """Discard pre-turn observations and localize only from fresh frames."""
+        self.not_before = self._now()
+        self.report_frames, self.last_report_stamp = 0, 0.
+        self.report_points = []
+        self.pending_report = None
+        self.terminal_seen = False
+        self._publish_localization_reset(reason, self.not_before)
         self._state('LOCALIZING_TARGET')
 
     def _publish_localization_reset(self, reason, not_before):
@@ -348,6 +403,46 @@ class TargetMissionCoordinator(Node):
                              'TIMEOUT':'MISSION_TIMEOUT'}.get(self.stop_purpose,'FAULT'))
             else:
                 self.quiet_seen = False
+        elif self.state == 'ALIGNING_TARGET':
+            if not self._quiet_ack():
+                if steady >= self.deadline:
+                    self._state('STOP_UNVERIFIED')
+            elif self.alignment_request is None:
+                angle, bearing = self._alignment_angle()
+                if abs(angle) < 1e-9:
+                    self.get_logger().info(
+                        f'Target alignment not required; bearing={bearing:.3f} rad')
+                    self._begin_target_localization('ALIGNMENT_NOT_REQUIRED')
+                elif self.spin is None or not self.spin.is_ready():
+                    self.get_logger().error('Target alignment failed: /spin unavailable')
+                    self._state('ALIGNMENT_FAILED')
+                else:
+                    self.get_logger().info(
+                        f'Target alignment starting: bearing={bearing:.3f} rad, '
+                        f'spin={angle:.3f} rad')
+                    self.alignment_request = self.spin.spin(
+                        angle, self.alignment_allowance, self.alignment_timeout)
+            elif self.alignment_request.future.done():
+                result = self.alignment_request.future.result()
+                if result.timed_out:
+                    self.get_logger().error(
+                        'Target alignment timed out without a verified remote terminal')
+                    self._state('STOP_UNVERIFIED')
+                elif (self.alignment_cancel_requested and
+                      result.status != GoalStatus.STATUS_UNKNOWN):
+                    self.get_logger().info(
+                        f'Target alignment cancel reached remote terminal '
+                        f'status={result.status}')
+                    self._state('OPERATOR_STOPPED')
+                elif result.success:
+                    self.get_logger().info(
+                        f'Target alignment terminal SUCCEEDED in {result.latency_s:.3f}s')
+                    self._begin_target_localization('ALIGNMENT_SUCCEEDED')
+                else:
+                    self.get_logger().error(
+                        f'Target alignment failed: status={result.status}, '
+                        f'error={result.error}')
+                    self._state('ALIGNMENT_FAILED')
         elif self.state == 'LOCALIZING_TARGET':
             if self._quiet_ack() and not self.terminal_seen:
                 self.terminal_seen = True
@@ -384,7 +479,8 @@ class TargetMissionCoordinator(Node):
     def _start_search(self, request, response):
         if (self.state != 'WAIT_FOR_TARGET' or not self._source_ready() or
                 not self.runtime.get('quiescent') or not self.verified or
-                not self.odom_healthy or self.runtime.get('finished')):
+                not self.odom_healthy or self.runtime.get('finished') or
+                (self.alignment_enabled and not self.spin.is_ready())):
             return self._response(response,False,'Require configured fresh detector, robot readiness, verified motion interrupt monitor and WAIT_FOR_TARGET')
         self.stop_token = ''
         self.search_deadline = time.monotonic()+self.mission_timeout
@@ -411,8 +507,23 @@ class TargetMissionCoordinator(Node):
         self._stop('FINISH')
         return self._response(response,True,'Finish requested; await terminal/window verification')
 
+    def _cancel_alignment(self, request, response):
+        if self.state != 'ALIGNING_TARGET':
+            return self._response(response,False,'No target alignment is active')
+        if self.alignment_request is None:
+            self._stop('OPERATOR')
+            return self._response(
+                response,True,
+                'Alignment not dispatched; awaiting navigation stop terminal')
+        self.alignment_cancel_requested = True
+        self.alignment_request.cancel()
+        return self._response(
+            response,True,
+            'Alignment cancel requested; await matching remote terminal')
+
     def _reset(self, request, response):
         if self.state not in ('IDLE','FINISHED','SEARCH_EXHAUSTED','LOCALIZATION_FAILED',
+                              'ALIGNMENT_FAILED',
                               'PAUSED','OPERATOR_STOPPED','MISSION_TIMEOUT','FAULT') or not self._quiet_ack():
             return self._response(response,False,'Reset refused while active or stop unverified')
         self.config = {}
@@ -431,6 +542,8 @@ def main(args=None):
         pass
     finally:
         if node is not None:
+            if node.spin is not None:
+                node.spin.close()
             node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

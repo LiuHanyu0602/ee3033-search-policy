@@ -118,9 +118,11 @@ def api(monkeypatch):
     )
     modules = {
         "action_msgs.msg": {"GoalStatus": status},
+        "builtin_interfaces.msg": {"Duration": NS},
         "geometry_msgs.msg": {"PoseStamped": object},
         "nav2_msgs.action": {
             "ComputePathToPose": NS(Goal=NS), "NavigateToPose": NS(Goal=NS),
+            "Spin": NS(Goal=NS),
         },
         "nav_msgs.msg": {"Path": object},
         "rclpy.action": {"ActionClient": FakeClient},
@@ -182,6 +184,27 @@ def test_planning_success_and_sequential_reuse(api):
     assert not second.future.done() and len(action.sent) == 2
     assert not node.timers[0].canceled
     assert node.timers[0].reset_count == 2
+
+
+def test_spin_client_sends_relative_yaw_and_requires_remote_success(api):
+    node = FakeNode()
+    client = api.SpinClient(node)
+    assert client.is_ready()
+    request = client.spin(-0.42, time_allowance_s=8.25, timeout_s=10.0)
+    action = FakeClient.instances[0]
+    goal = action.sent[-1][0]
+    assert goal.target_yaw == pytest.approx(-0.42)
+    assert (goal.time_allowance.sec, goal.time_allowance.nanosec) == (8, 250_000_000)
+    handle = accepted(action)
+    assert not request.future.done()
+    finish(handle, status=4, result=NS())
+    assert request.future.result().success
+
+
+def test_spin_timeout_must_exceed_allowance(api):
+    client = api.SpinClient(FakeNode())
+    with pytest.raises(ValueError):
+        client.spin(0.2, time_allowance_s=8.0, timeout_s=8.0)
 
 
 def test_busy_does_not_send_or_displace_first(api):

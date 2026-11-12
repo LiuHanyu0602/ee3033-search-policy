@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace as NS
 import numpy as np
 from ee3033_search_policy.stamped_localization import (
-    LocalizationMemory, choose_gated_point, map_ground_point,
+    LocalizationMemory, bbox_requires_lidar, choose_gated_point, map_ground_point,
     rotation_from_quaternion,
 )
 
@@ -31,6 +31,20 @@ class TestStampedLocalization(unittest.TestCase):
                                              mode='ground_only')[0])
         with self.assertRaises(ValueError):
             choose_gated_point([2., 1.], [2., 1.], mode='unknown')
+
+    def test_vertical_bbox_boundary_requires_lidar_only(self):
+        self.assertTrue(bbox_requires_lidar(320, 40, 100, 80, 640, 480))
+        self.assertTrue(bbox_requires_lidar(320, 440, 100, 80, 640, 480))
+        self.assertFalse(bbox_requires_lidar(320, 240, 100, 80, 640, 480))
+        with self.assertRaisesRegex(ValueError, 'HORIZONTAL_BOUNDARY'):
+            bbox_requires_lidar(590, 240, 100, 80, 640, 480)
+
+    def test_vertical_bbox_lidar_method_is_explicit(self):
+        memory = LocalizationMemory(minimum_range_observations=1)
+        memory.add(10., [0, 0, 1], [1, 0, 0], [2., 0], .9,
+                   source='lidar_vertical_bbox_boundary')
+        _, _, method = memory.estimate()
+        self.assertEqual(method, 'lidar_vertical_bbox_boundary_fusion')
 
     def test_range_estimate_waits_for_configured_raw_frame_count(self):
         memory = LocalizationMemory(minimum_range_observations=5)
