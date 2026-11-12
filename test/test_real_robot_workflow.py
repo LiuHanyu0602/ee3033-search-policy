@@ -127,3 +127,5 @@ def test_workflow_contains_complete_owned_process_sequence():
     assert 'consecutive >= 3' in workflow
     assert "'/amcl_pose'" in workflow
     assert 'amcl_pose_history' in workflow
+    assert 'self.lifecycle_clients = {}' in workflow
+    assert 'self.lifecycle_clients.get(node_name)' in workflow

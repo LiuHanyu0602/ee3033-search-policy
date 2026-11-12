@@ -135,6 +135,11 @@ class WorkflowNode(Node):
         self.amcl_pose = None
         self.amcl_pose_serial = 0
         self.amcl_pose_history = deque(maxlen=20)
+        # Lifecycle readiness is polled while a separate executor thread is
+        # spinning this node.  Keep these clients for the node lifetime: in
+        # Humble, destroying and recreating them inside the polling loop can
+        # race the executor wait set and raise InvalidHandle.
+        self.lifecycle_clients = {}
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.initial_pose_pub = self.create_publisher(
@@ -305,19 +310,19 @@ class WorkflowNode(Node):
             raise WorkflowError(f'Timed out waiting for {description}')
 
     def lifecycle_active(self, node_name, timeout=2.0):
-        client = self.create_client(GetState, f'/{node_name}/get_state')
+        client = self.lifecycle_clients.get(node_name)
+        if client is None:
+            client = self.create_client(GetState, f'/{node_name}/get_state')
+            self.lifecycle_clients[node_name] = client
+        if not client.wait_for_service(timeout_sec=timeout):
+            return False
+        future = client.call_async(GetState.Request())
         try:
-            if not client.wait_for_service(timeout_sec=timeout):
-                return False
-            future = client.call_async(GetState.Request())
-            try:
-                self._wait_future(future, timeout, node_name)
-            except WorkflowError:
-                return False
-            response = future.result()
-            return response is not None and response.current_state.label == 'active'
-        finally:
-            self.destroy_client(client)
+            self._wait_future(future, timeout, node_name)
+        except WorkflowError:
+            return False
+        response = future.result()
+        return response is not None and response.current_state.label == 'active'
 
     def return_home(self, pose, timeout=180.0):
         if not self.return_client.wait_for_server(timeout_sec=10.0):
