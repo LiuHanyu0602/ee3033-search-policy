@@ -211,6 +211,12 @@ ros2 topic echo /target/estimate --once   --qos-durability transient_local --qos
 
 ## 8. Required one-command implementation
 
+The current one-command workflow records `map -> base_footprint` as soon as
+SLAM is ready. After loop closure the operator must drive back near that pose;
+`DONE` is accepted only within 0.40 m and 0.52 rad. The saved-map phase uses
+the recorded mapping-start pose for `/initialpose` and requires three
+consecutive matching `/amcl_pose` and TF updates before camera/search startup.
+
 ### Current dual-mode ranging test
 
 The current one-command workflow enables `range_mode: lidar_then_ground` in

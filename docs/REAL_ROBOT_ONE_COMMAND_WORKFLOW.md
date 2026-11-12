@@ -37,14 +37,15 @@ overwrite an existing map.
 The workflow asks only for these task decisions:
 
 1. press Enter to authorize startup with the floor clear and E-stop ready;
-2. manually map with the existing robot controls, stop after loop closure, and
-   stop issuing manual motion commands, then type `DONE`;
+2. manually map with the existing robot controls, complete loop closure, drive
+   back near the recorded mapping start, stop issuing manual motion commands,
+   then type `DONE`;
 3. place the target on the floor outside the initial camera view and type its
    deployed class name, for example `bottle`.
 
 After `DONE`, the workflow automatically:
 
-- captures the SLAM-frame start pose;
+- records the SLAM-frame pose immediately after mapping becomes ready;
 - saves and hashes the new map;
 - removes only isolated occupied pixels whose other 24 cells in a complete
   5x5 neighborhood are all known free, retaining the original as
@@ -64,10 +65,10 @@ After `DONE`, the workflow automatically:
 - requires remote `SUCCEEDED` before reporting return completion.
 
 The manual controller is external to this workflow. It is neither launched nor
-stopped by the script. `DONE` is the operator's assertion that the robot is
-stationary and the manual controller is no longer issuing motion commands;
-there are no intermediate ROS commands between that confirmation and known-map
-Nav2 readiness.
+stopped by the script. `DONE` is the operator's assertion that the robot has
+returned near the displayed mapping start, is stationary, and the manual
+controller is no longer issuing motion commands. A failed start-pose check
+keeps SLAM running so the operator can reposition and type `DONE` again.
 
 Detailed child-process output is written under
 `/tmp/ee3033_workflow_<timestamp>/`. The console prints phase changes,

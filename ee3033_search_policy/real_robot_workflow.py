@@ -7,6 +7,7 @@ import math
 import os
 from pathlib import Path
 import signal
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -40,6 +41,7 @@ from .workflow_support import (
     clean_isolated_occupied_pixels,
     file_sha256,
     saved_map_files,
+    planar_pose_error,
     validate_new_map_prefix,
 )
 
@@ -130,6 +132,9 @@ class WorkflowNode(Node):
         self.localization_candidate = None
         self.runtime = {}
         self.estimate = None
+        self.amcl_pose = None
+        self.amcl_pose_serial = 0
+        self.amcl_pose_history = deque(maxlen=20)
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.initial_pose_pub = self.create_publisher(
@@ -140,6 +145,9 @@ class WorkflowNode(Node):
             LaserScan, '/scan', lambda msg: self._touch('scan'), sensor_qos)
         self.create_subscription(
             Odometry, '/odom', lambda msg: self._touch('odom'), sensor_qos)
+        self.create_subscription(
+            PoseWithCovarianceStamped, '/amcl_pose', self._amcl_pose,
+            QoSProfile(depth=10))
         self.create_subscription(
             Image, '/camera/image_raw', lambda msg: self._touch('image'), sensor_qos)
         self.create_subscription(
@@ -199,6 +207,21 @@ class WorkflowNode(Node):
         self.estimate = msg
         self._touch('estimate')
 
+    def _amcl_pose(self, msg):
+        p, q = msg.pose.pose.position, msg.pose.pose.orientation
+        norm = q.x*q.x+q.y*q.y+q.z*q.z+q.w*q.w
+        if (msg.header.frame_id != 'map' or
+                not all(math.isfinite(value) for value in
+                        (p.x, p.y, q.x, q.y, q.z, q.w)) or
+                abs(norm-1.0) > 1e-3):
+            return
+        yaw = math.atan2(2*(q.w*q.z+q.x*q.y), 1-2*(q.y*q.y+q.z*q.z))
+        self.amcl_pose = PlanarPose(float(p.x), float(p.y), float(yaw))
+        self.amcl_pose_serial += 1
+        self.amcl_pose_history.append(
+            (self.amcl_pose_serial, self.amcl_pose))
+        self._touch('amcl_pose')
+
     def recent(self, name, age=2.0):
         return name in self.receipts and time.monotonic()-self.receipts[name] <= age
 
@@ -224,6 +247,8 @@ class WorkflowNode(Node):
         return PlanarPose(float(t.x), float(t.y), float(yaw))
 
     def publish_initial_pose(self, pose):
+        self.amcl_pose = None
+        self.amcl_pose_history.clear()
         message = PoseWithCovarianceStamped()
         message.header.frame_id = 'map'
         message.pose.pose.position.x = pose.x
@@ -375,6 +400,58 @@ class RealRobotWorkflow:
             f'--- {process.name} ---\n{process.tail(12)}' for process in processes)
         raise WorkflowError(f'Timed out waiting for {description}\n{details}')
 
+    def capture_pose(self, description, processes=(), sample_count=7):
+        samples = []
+        deadline = time.monotonic()+3.0
+        while len(samples) < sample_count and time.monotonic() < deadline:
+            self.assert_alive(processes)
+            pose = self.node.pose()
+            if pose is not None:
+                samples.append(pose)
+            time.sleep(0.1)
+        if len(samples) < sample_count:
+            raise WorkflowError(f'Could not capture stable {description} pose')
+        yaw = math.atan2(
+            sum(math.sin(pose.yaw) for pose in samples),
+            sum(math.cos(pose.yaw) for pose in samples),
+        )
+        return PlanarPose(
+            statistics.median(pose.x for pose in samples),
+            statistics.median(pose.y for pose in samples),
+            yaw,
+        )
+
+    def wait_for_amcl_convergence(
+            self, expected, after_serial, timeout, processes):
+        deadline = time.monotonic()+timeout
+        last_serial = after_serial
+        consecutive = 0
+        while time.monotonic() < deadline:
+            self.assert_alive(processes)
+            updates = [entry for entry in self.node.amcl_pose_history
+                       if entry[0] > last_serial]
+            for serial, amcl in updates:
+                last_serial = serial
+                tf_pose = self.node.pose()
+                amcl_ok = amcl is not None and all(
+                    measured <= limit for measured, limit in zip(
+                        planar_pose_error(amcl, expected),
+                        (self.args.start_position_tolerance_m,
+                         self.args.start_yaw_tolerance_rad)))
+                tf_ok = tf_pose is not None and all(
+                    measured <= limit for measured, limit in zip(
+                        planar_pose_error(tf_pose, expected),
+                        (self.args.start_position_tolerance_m,
+                         self.args.start_yaw_tolerance_rad)))
+                consecutive = consecutive+1 if amcl_ok and tf_ok else 0
+                if consecutive >= 3:
+                    self.info('AMCL localization at mapping start: ready')
+                    return
+            time.sleep(0.1)
+        raise WorkflowError(
+            'AMCL did not converge for three consecutive updates near the '
+            'recorded mapping start pose')
+
     def prompt_start(self):
         if not sys.stdin.isatty():
             raise WorkflowError('Interactive terminal required for operator confirmations')
@@ -400,18 +477,37 @@ class RealRobotWorkflow:
             self.args.startup_timeout,
             (mapping,),
         )
+        mapping_start = self.capture_pose('mapping start', (mapping,))
+        self.info(
+            f'mapping start recorded: x={mapping_start.x:.3f}, '
+            f'y={mapping_start.y:.3f}, yaw={mapping_start.yaw:.3f}')
         self.info('SLAM is live. Map manually with the existing operator controls.')
-        while input(
-                '[OPERATOR] After loop closure, stop the robot and stop issuing '
-                'manual motion commands, then type DONE: '
-                ).strip().casefold() != 'done':
+        while True:
+            answer = input(
+                '[OPERATOR] After loop closure, drive back near the mapping '
+                'start, stop manual commands, then type DONE: '
+            ).strip().casefold()
+            if answer != 'done':
+                self.info('Mapping continues; return to the recorded start before DONE.')
+                continue
+            mapping_return = self.capture_pose('mapping return', (mapping,))
+            position_error, yaw_error = planar_pose_error(
+                mapping_return, mapping_start)
             self.info(
-                'Mapping continues; type DONE only when the robot and manual '
-                'control are both stopped.')
-        home = self.node.pose()
-        if home is None:
-            raise WorkflowError('Could not capture map -> base_footprint at mapping completion')
-        self.info(f'home captured: x={home.x:.3f}, y={home.y:.3f}, yaw={home.yaw:.3f}')
+                f'mapping return check: distance={position_error:.3f} m, '
+                f'yaw_error={yaw_error:.3f} rad')
+            if (position_error <= self.args.start_position_tolerance_m and
+                    yaw_error <= self.args.start_yaw_tolerance_rad):
+                break
+            self.info(
+                'Robot is not close enough to the mapping start; mapping remains '
+                'active so the operator can correct the pose.')
+        home = mapping_start
+        self.summary['mapping_start'] = {
+            'x': mapping_start.x, 'y': mapping_start.y, 'yaw': mapping_start.yaw}
+        self.summary['mapping_return'] = {
+            'x': mapping_return.x, 'y': mapping_return.y, 'yaw': mapping_return.yaw,
+            'position_error_m': position_error, 'yaw_error_rad': yaw_error}
         self.summary['home'] = {'x': home.x, 'y': home.y, 'yaw': home.yaw}
 
         self._save_map()
@@ -439,13 +535,10 @@ class RealRobotWorkflow:
             self.args.nav_timeout,
             (nav,),
         )
+        amcl_serial = self.node.amcl_pose_serial
         self.node.publish_initial_pose(home)
-        self.wait_for(
-            'AMCL localization restored from SLAM home pose',
-            lambda: self._localized_near(home),
-            self.args.nav_timeout,
-            (nav,),
-        )
+        self.wait_for_amcl_convergence(
+            home, amcl_serial, self.args.nav_timeout, (nav,))
         if not self.node.return_client.wait_for_server(timeout_sec=10.0):
             raise WorkflowError('/navigate_to_pose action server unavailable')
 
@@ -794,6 +887,8 @@ def parse_args(argv=None):
     parser.add_argument('--runtime-timeout', type=float, default=30.0)
     parser.add_argument('--search-timeout', type=float, default=330.0)
     parser.add_argument('--return-timeout', type=float, default=180.0)
+    parser.add_argument('--start-position-tolerance-m', type=float, default=0.40)
+    parser.add_argument('--start-yaw-tolerance-rad', type=float, default=0.52)
     return parser.parse_args(argv)
 
 
@@ -809,6 +904,12 @@ def preflight(args):
         raise WorkflowError('/dev/video0 is missing')
     if not 0.0 < args.min_confidence <= 1.0:
         raise WorkflowError('--min-confidence must be in (0, 1]')
+    if (not math.isfinite(args.start_position_tolerance_m) or
+            args.start_position_tolerance_m <= 0):
+        raise WorkflowError('--start-position-tolerance-m must be positive')
+    if (not math.isfinite(args.start_yaw_tolerance_rad) or
+            not 0 < args.start_yaw_tolerance_rad <= math.pi):
+        raise WorkflowError('--start-yaw-tolerance-rad must be in (0, pi]')
     result = subprocess.run(
         ['ros2', 'node', 'list'], stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, text=True, timeout=8.0, check=False)

@@ -81,6 +81,14 @@ def angular_error(a, b):
     return abs(math.atan2(math.sin(a-b), math.cos(a-b)))
 
 
+def planar_pose_error(actual, expected):
+    """Return translation and wrapped yaw error between planar poses."""
+    if not isinstance(actual, PlanarPose) or not isinstance(expected, PlanarPose):
+        raise TypeError('PlanarPose values required')
+    return (math.hypot(actual.x-expected.x, actual.y-expected.y),
+            angular_error(actual.yaw, expected.yaw))
+
+
 def _pgm_header(data):
     """Return PGM magic, width, height, maxval, and raster offset."""
     tokens = []

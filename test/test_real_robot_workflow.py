@@ -7,6 +7,7 @@ from ee3033_search_policy.workflow_support import (
     angular_error,
     clean_isolated_occupied_pixels,
     saved_map_files,
+    planar_pose_error,
     validate_new_map_prefix,
 )
 
@@ -38,6 +39,10 @@ def test_pose_and_angle_validation():
     assert angular_error(3.13, -3.13) < 0.03
     with pytest.raises(ValueError):
         PlanarPose(float('nan'), 0.0, 0.0)
+    distance, yaw = planar_pose_error(
+        PlanarPose(3., 4., -3.13), PlanarPose(0., 0., 3.13))
+    assert distance == pytest.approx(5.)
+    assert yaw < .03
 
 
 def write_test_map(tmp_path, pixels):
@@ -104,3 +109,8 @@ def test_workflow_contains_complete_owned_process_sequence():
     assert "'/target/localization_status'" in workflow
     assert "'/target/estimate_candidate'" in workflow
     assert 'localization candidate: method=' in workflow
+    assert 'mapping start recorded:' in workflow
+    assert 'mapping return check:' in workflow
+    assert 'consecutive >= 3' in workflow
+    assert "'/amcl_pose'" in workflow
+    assert 'amcl_pose_history' in workflow
