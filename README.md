@@ -846,4 +846,6 @@ are known free. The original raster is retained as `<map-prefix>.raw.pgm`.
 The map prefix must be new. See
 [`docs/REAL_ROBOT_ONE_COMMAND_WORKFLOW.md`](docs/REAL_ROBOT_ONE_COMMAND_WORKFLOW.md)
 for the three operator prompts, exact reproduced parameters, recovery behavior,
-logs, and build command.
+logs, and build command. The workflow currently enables image-stamped
+LiDAR/camera dual-mode target ranging and records the selected localization
+method in the final estimate.

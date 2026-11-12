@@ -33,11 +33,41 @@ def map_ground_point(origin, direction, ground_z, minimum_range=.15,
     return point[:2] if minimum_range <= distance <= maximum_range else None
 
 
+def choose_gated_point(ground_point, lidar_point, gate_m=.35,
+                       mode='lidar_then_ground'):
+    """Choose a map-frame range point while rejecting likely wall returns."""
+    if mode not in ('ground_only', 'lidar_only', 'lidar_then_ground'):
+        raise ValueError('Unsupported range mode')
+    ground = None if ground_point is None else np.asarray(ground_point, dtype=float)
+    lidar = None if lidar_point is None else np.asarray(lidar_point, dtype=float)
+    ground_ok = ground is not None and ground.shape == (2,) and np.all(np.isfinite(ground))
+    lidar_ok = lidar is not None and lidar.shape == (2,) and np.all(np.isfinite(lidar))
+    if mode == 'ground_only':
+        return (ground.copy(), 'ground_plane') if ground_ok else (None, 'unavailable')
+    if mode == 'lidar_only':
+        return (lidar.copy(), 'lidar_ungated') if lidar_ok else (None, 'unavailable')
+    gate = float(gate_m)
+    if not math.isfinite(gate) or gate <= 0:
+        raise ValueError('Positive finite LiDAR/visual gate required')
+    if ground_ok and lidar_ok and np.linalg.norm(ground-lidar) <= gate:
+        return lidar.copy(), 'lidar_ground_consistent'
+    if ground_ok:
+        return ground.copy(), 'ground_lidar_rejected' if lidar_ok else 'ground_plane'
+    if lidar_ok:
+        return lidar.copy(), 'lidar_ungated'
+    return None, 'unavailable'
+
+
 class LocalizationMemory:
     def __init__(self, maximum=30, baseline=.25, crossing_angle=.17453,
-                 fusion_gate=.35, range_min=.15, range_max=4., horizon=15.):
+                 fusion_gate=.35, range_min=.15, range_max=4., horizon=15.,
+                 minimum_range_observations=1):
         self.maximum, self.baseline, self.crossing_angle = maximum, baseline, crossing_angle
         self.fusion_gate, self.range_min, self.range_max = fusion_gate, range_min, range_max
+        if (not isinstance(minimum_range_observations, int) or
+                minimum_range_observations < 1):
+            raise ValueError('minimum_range_observations must be an integer >= 1')
+        self.minimum_range_observations = minimum_range_observations
         self.horizon = horizon
         self.configure('', -1, '')
 
@@ -56,7 +86,8 @@ class LocalizationMemory:
         self.last_stamp = stamp
         return True
 
-    def add(self, stamp, origin, direction, ground, weight, track=''):
+    def add(self, stamp, origin, direction, range_point, weight, track='',
+            source='ground_plane'):
         origin, direction = np.asarray(origin, dtype=float), np.asarray(direction, dtype=float)
         if not np.all(np.isfinite(origin)) or not np.all(np.isfinite(direction)):
             raise ValueError('Nonfinite observation geometry')
@@ -69,18 +100,34 @@ class LocalizationMemory:
             self.samples.popleft()
         # Repeated views can improve range fusion, but only distinct origins are
         # admitted to bearing triangulation below.
-        self.samples.append((stamp, origin[:2], direction[:2]/planar, ground, weight, track))
+        if range_point is not None:
+            range_point = np.asarray(range_point, dtype=float)
+            if range_point.shape != (2,) or not np.all(np.isfinite(range_point)):
+                raise ValueError('Invalid range point')
+        self.samples.append((stamp, origin[:2], direction[:2]/planar,
+                             range_point, weight, track, str(source)))
 
     def estimate(self):
         points, weights = [], []
         rays = []
+        sources = []
         for sample in self.samples:
-            _, origin, direction, ground, weight, _ = sample
-            if ground is not None:
-                points.append(ground); weights.append(weight)
+            _, origin, direction, range_point, weight, _, source = sample
+            if range_point is not None:
+                points.append(range_point); weights.append(weight); sources.append(source)
             if all(np.linalg.norm(origin-r[1]) >= .03 for r in rays):
                 rays.append(sample)
-        method = 'ground_projection_fusion'
+        range_ready = len(points) >= self.minimum_range_observations
+        fusion_points = list(points) if range_ready else []
+        fusion_weights = list(weights) if range_ready else []
+        if any(s == 'lidar_ground_consistent' for s in sources):
+            method = 'lidar_visual_range_fusion'
+        elif any(s == 'ground_lidar_rejected' for s in sources):
+            method = 'ground_projection_fusion_lidar_rejected'
+        elif any(s.startswith('lidar') for s in sources):
+            method = 'lidar_range_fusion'
+        else:
+            method = 'ground_projection_fusion'
         if len(rays) >= 3:
             origins = np.asarray([r[1] for r in rays])
             directions = np.asarray([r[2] for r in rays])
@@ -98,11 +145,16 @@ class LocalizationMemory:
                         # Ground and bearing disagreement is a failure, not blind averaging.
                         if points and np.linalg.norm(p-np.median(points, axis=0)) > self.fusion_gate:
                             return None, None, 'INCONSISTENT_METHODS'
-                        points.append(p); weights.append(float(np.mean([r[4] for r in rays])))
+                        fusion_points.append(p)
+                        fusion_weights.append(float(np.mean([r[4] for r in rays])))
                         method = 'multiview_ransac_fusion'
-        if not points:
+        if not fusion_points:
+            if points:
+                return None, None, ('INSUFFICIENT_RANGE_OBSERVATIONS_'
+                                    f'{len(points)}_OF_{self.minimum_range_observations}')
             return None, None, 'INSUFFICIENT_GEOMETRY'
-        p, cov, _ = robust_weighted_fusion(points, weights, self.fusion_gate)
+        p, cov, _ = robust_weighted_fusion(
+            fusion_points, fusion_weights, self.fusion_gate)
         if p is None or not np.all(np.isfinite(p)) or not np.all(np.isfinite(cov)):
             return None, None, 'INVALID_ESTIMATE'
         # Empirical scatter is NOT total localization uncertainty. Provisional

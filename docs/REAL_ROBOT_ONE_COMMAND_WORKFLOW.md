@@ -83,7 +83,10 @@ pose, target episode, final estimate, return result, or the failure reason.
 - target observation and localization age remain `0.5 s`;
 - detector-only recovery grace `0.75 s`;
 - three consistent localization estimates;
-- ground-contact localization for an object placed on the floor;
+- image-stamped LiDAR/camera dual-mode ranging for an object placed on the
+  floor: a nearby scan is preferred when it agrees with the calibrated camera
+  ground projection, otherwise the camera projection is retained;
+- five valid range observations before a localization candidate is emitted;
 - continuous search, at most 100 navigation goals;
 - instructor Nav2 controller and costmap parameters are not overridden.
 

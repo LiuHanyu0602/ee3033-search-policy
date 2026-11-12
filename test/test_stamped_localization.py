@@ -2,7 +2,8 @@ import unittest
 from types import SimpleNamespace as NS
 import numpy as np
 from ee3033_search_policy.stamped_localization import (
-    LocalizationMemory, map_ground_point, rotation_from_quaternion,
+    LocalizationMemory, choose_gated_point, map_ground_point,
+    rotation_from_quaternion,
 )
 
 
@@ -18,6 +19,30 @@ class TestStampedLocalization(unittest.TestCase):
         np.testing.assert_allclose(rotation_from_quaternion(0, 0, 0, 2), np.eye(3))
         with self.assertRaises(ValueError):
             rotation_from_quaternion(0, 0, 0, 0)
+
+    def test_lidar_visual_point_gate(self):
+        point, method = choose_gated_point([2., 1.], [2.1, 1.], .2)
+        np.testing.assert_allclose(point, [2.1, 1.])
+        self.assertEqual(method, 'lidar_ground_consistent')
+        point, method = choose_gated_point([2., 1.], [4., 1.], .2)
+        np.testing.assert_allclose(point, [2., 1.])
+        self.assertEqual(method, 'ground_lidar_rejected')
+        self.assertIsNone(choose_gated_point(None, [2., 1.], .2,
+                                             mode='ground_only')[0])
+        with self.assertRaises(ValueError):
+            choose_gated_point([2., 1.], [2., 1.], mode='unknown')
+
+    def test_range_estimate_waits_for_configured_raw_frame_count(self):
+        memory = LocalizationMemory(minimum_range_observations=5)
+        for i in range(4):
+            memory.add(10+i*.1, [0, 0, 1], [1, 0, 0],
+                       [2+i*.01, 0], .9)
+            self.assertIsNone(memory.estimate()[0])
+        memory.add(10.4, [0, 0, 1], [1, 0, 0], [2.04, 0], .9,
+                   source='lidar_ground_consistent')
+        point, _, method = memory.estimate()
+        np.testing.assert_allclose(point, [2.02, 0])
+        self.assertEqual(method, 'lidar_visual_range_fusion')
 
     def test_episode_stamp_filter(self):
         m = LocalizationMemory()

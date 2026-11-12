@@ -211,6 +211,21 @@ ros2 topic echo /target/estimate --once   --qos-durability transient_local --qos
 
 ## 8. Required one-command implementation
 
+### Current dual-mode ranging test
+
+The current one-command workflow enables `range_mode: lidar_then_ground` in
+`config/real_robot_workflow.yaml`. Each image-stamped target observation is
+matched to the closest fresh `/scan` within `0.12 s`. The LiDAR and calibrated
+camera ground points are compared in `map`; LiDAR is selected when they agree
+within `0.35 m`, otherwise the camera ground point is retained. Five valid
+range observations are required before publishing a candidate.
+
+Use the existing one-command entry unchanged. The final estimate's `method`
+distinguishes `lidar_visual_range_fusion`,
+`ground_projection_fusion_lidar_rejected`, and camera-only fallback. This is a
+test configuration; validate the synchronization tolerance and gate against
+recorded real-robot data before treating them as final calibration.
+
 After one manual run succeeds, implement `real_search.launch.py` with arguments:
 
 ```text

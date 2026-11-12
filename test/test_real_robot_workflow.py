@@ -98,3 +98,5 @@ def test_workflow_contains_complete_owned_process_sequence():
     assert 'max_age_s: 1.5' in config
     assert 'maximum_age_s: 0.5' in config
     assert 'detector_fault_grace_s: 0.75' in config
+    assert 'range_mode: lidar_then_ground' in config
+    assert 'scan_sync_tolerance_s: 0.12' in config
