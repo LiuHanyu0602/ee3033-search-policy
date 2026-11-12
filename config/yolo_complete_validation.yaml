@@ -78,9 +78,9 @@ stamped_target_localizer:
     camera_info_topic: /camera_info
     scan_topic: /scan
     map_frame: map
-    # Match each image-stamped detection to a nearby scan. Prefer LiDAR when
-    # its map point agrees with the calibrated ground-plane projection.
-    range_mode: lidar_then_ground
+    # Select the nearest adjacent-point support in the bbox angle sector, then
+    # require agreement with the calibrated ground-plane projection.
+    range_mode: nearest_lidar_then_ground
     maximum_age_s: 0.5
     minimum_range_m: 0.15
     maximum_range_m: 4.0
@@ -88,7 +88,7 @@ stamped_target_localizer:
     scan_sync_tolerance_s: 0.12
     scan_window_rad: 0.05236
     minimum_lidar_points: 2
-    lidar_ground_gate_m: 0.35
+    lidar_ground_gate_m: 0.20
     laser_yaw_offset_rad: 0.0
     scan_buffer_size: 50
     minimum_range_observations: 5

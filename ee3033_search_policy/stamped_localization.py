@@ -49,7 +49,8 @@ def bbox_requires_lidar(cx, cy, width, height, image_width, image_height):
 def choose_gated_point(ground_point, lidar_point, gate_m=.35,
                        mode='lidar_then_ground'):
     """Choose a map-frame range point while rejecting likely wall returns."""
-    if mode not in ('ground_only', 'lidar_only', 'lidar_then_ground'):
+    if mode not in ('ground_only', 'lidar_only', 'lidar_then_ground',
+                    'nearest_lidar_then_ground'):
         raise ValueError('Unsupported range mode')
     ground = None if ground_point is None else np.asarray(ground_point, dtype=float)
     lidar = None if lidar_point is None else np.asarray(lidar_point, dtype=float)
@@ -63,9 +64,14 @@ def choose_gated_point(ground_point, lidar_point, gate_m=.35,
     if not math.isfinite(gate) or gate <= 0:
         raise ValueError('Positive finite LiDAR/visual gate required')
     if ground_ok and lidar_ok and np.linalg.norm(ground-lidar) <= gate:
-        return lidar.copy(), 'lidar_ground_consistent'
+        source = ('lidar_bbox_nearest_consistent'
+                  if mode == 'nearest_lidar_then_ground'
+                  else 'lidar_ground_consistent')
+        return lidar.copy(), source
     if ground_ok:
         return ground.copy(), 'ground_lidar_rejected' if lidar_ok else 'ground_plane'
+    if mode == 'nearest_lidar_then_ground':
+        return None, 'unavailable'
     if lidar_ok:
         return lidar.copy(), 'lidar_ungated'
     return None, 'unavailable'
@@ -135,6 +141,10 @@ class LocalizationMemory:
         fusion_weights = list(weights) if range_ready else []
         if any(s == 'lidar_vertical_bbox_boundary' for s in sources):
             method = 'lidar_vertical_bbox_boundary_fusion'
+        elif any(s == 'lidar_bbox_nearest_consistent' for s in sources):
+            method = 'lidar_bbox_nearest_visual_fusion'
+        elif any(s == 'lidar_bbox_nearest' for s in sources):
+            method = 'lidar_bbox_nearest_fusion'
         elif any(s == 'lidar_ground_consistent' for s in sources):
             method = 'lidar_visual_range_fusion'
         elif any(s == 'ground_lidar_rejected' for s in sources):

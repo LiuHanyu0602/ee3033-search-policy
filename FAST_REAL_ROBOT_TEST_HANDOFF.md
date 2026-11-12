@@ -219,15 +219,19 @@ consecutive matching `/amcl_pose` and TF updates before camera/search startup.
 
 ### Current dual-mode ranging test
 
-The current one-command workflow enables `range_mode: lidar_then_ground` in
+The current one-command workflow enables
+`range_mode: nearest_lidar_then_ground` in
 `config/real_robot_workflow.yaml`. Each image-stamped target observation is
-matched to the closest fresh `/scan` within `0.12 s`. The LiDAR and calibrated
-camera ground points are compared in `map`; LiDAR is selected when they agree
-within `0.35 m`, otherwise the camera ground point is retained. Five valid
-range observations are required before publishing a candidate.
+matched to the closest fresh `/scan` within `0.12 s`. The bbox left/right rays
+define a LiDAR angle sector with a 0.05236 rad margin. The nearest support of
+at least two adjacent beams is selected without requiring a minimum
+target-to-wall depth separation. LiDAR is used only when its map point agrees
+with the calibrated camera ground point within `0.20 m`; otherwise the camera
+point is retained. Five valid range observations are required before a
+candidate is published.
 
 Use the existing one-command entry unchanged. The final estimate's `method`
-distinguishes `lidar_visual_range_fusion`,
+distinguishes `lidar_bbox_nearest_visual_fusion`,
 `ground_projection_fusion_lidar_rejected`, and camera-only fallback. This is a
 test configuration; validate the synchronization tolerance and gate against
 recorded real-robot data before treating them as final calibration.

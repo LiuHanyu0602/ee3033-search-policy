@@ -88,8 +88,10 @@ pose, target episode, final estimate, return result, or the failure reason.
 - detector-only recovery grace `0.75 s`;
 - three consistent localization estimates;
 - image-stamped LiDAR/camera dual-mode ranging for an object placed on the
-  floor: a nearby scan is preferred when it agrees with the calibrated camera
-  ground projection, otherwise the camera projection is retained;
+  floor: the nearest adjacent-beam support inside the bbox angle sector is
+  preferred when it agrees with the calibrated camera ground projection
+  within `0.20 m`; otherwise the camera projection is retained. No minimum
+  target-to-wall separation is required;
 - five valid range observations before a localization candidate is emitted;
 - bbox contact with the top or bottom image boundary disables camera ground
   projection for that frame and requires a synchronized LiDAR return;

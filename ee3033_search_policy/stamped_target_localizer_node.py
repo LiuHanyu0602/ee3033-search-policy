@@ -17,7 +17,9 @@ from .stamped_localization import (
     LocalizationMemory, bbox_requires_lidar, choose_gated_point, map_ground_point,
     rotation_from_quaternion,
 )
-from .target_localization_core import robust_lidar_range, undistort_normalized
+from .target_localization_core import (
+    nearest_supported_lidar_cluster, robust_lidar_range, undistort_normalized,
+)
 
 
 class StampedTargetLocalizer(Node):
@@ -55,7 +57,8 @@ class StampedTargetLocalizer(Node):
                 not 0 < self.rmin < self.rmax or self.age <= 0 or
                 min(self.scan_age, self.scan_sync, self.scan_window,
                     self.lidar_ground_gate) <= 0 or
-                self.range_mode not in ('ground_only', 'lidar_only', 'lidar_then_ground') or
+                self.range_mode not in ('ground_only', 'lidar_only', 'lidar_then_ground',
+                                        'nearest_lidar_then_ground') or
                 self.minimum_lidar_points < 1 or scan_buffer_size < 2 or
                 minimum_range_observations < 1):
             raise ValueError('Invalid geometry limits')
@@ -137,7 +140,7 @@ class StampedTargetLocalizer(Node):
         delta, _, scan = min(candidates, key=lambda row: row[0])
         return scan if delta <= self.scan_sync else None
 
-    def _lidar_point(self, image_stamp, now, map_direction):
+    def _lidar_point(self, image_stamp, now, map_direction, edge_directions=None):
         if self.range_mode == 'ground_only':
             return None
         scan = self._matched_scan(image_stamp, now)
@@ -150,22 +153,48 @@ class StampedTargetLocalizer(Node):
             return None
         q, t = transform.transform.rotation, transform.transform.translation
         rotation = rotation_from_quaternion(q.x, q.y, q.z, q.w)
-        scan_direction = rotation.T @ np.asarray(map_direction, dtype=float)
-        if np.linalg.norm(scan_direction[:2]) < 1e-9:
+        def scan_bearing(direction):
+            transformed = rotation.T @ np.asarray(direction, dtype=float)
+            if np.linalg.norm(transformed[:2]) < 1e-9:
+                raise ValueError('INVALID_SCAN_DIRECTION')
+            return (math.atan2(transformed[1], transformed[0])-
+                    self.laser_yaw_offset)
+        try:
+            bearing = scan_bearing(map_direction)
+        except ValueError:
             return None
-        bearing = math.atan2(scan_direction[1], scan_direction[0])-self.laser_yaw_offset
         angles = scan.angle_min+np.arange(len(scan.ranges))*scan.angle_increment
         scan_min = max(self.rmin, float(scan.range_min))
         scan_max = min(self.rmax, float(scan.range_max))
         if not math.isfinite(scan_min) or not math.isfinite(scan_max) or scan_min >= scan_max:
             return None
-        distance = robust_lidar_range(
-            scan.ranges, angles, bearing, self.scan_window, scan_min, scan_max,
-            minimum_points=self.minimum_lidar_points)
+        if (self.range_mode == 'nearest_lidar_then_ground' and
+                edge_directions is not None):
+            try:
+                edge_bearings = [scan_bearing(direction)
+                                 for direction in edge_directions]
+                selected = nearest_supported_lidar_cluster(
+                    scan.ranges, angles, bearing, edge_bearings,
+                    self.scan_window, scan_min, scan_max,
+                    minimum_points=self.minimum_lidar_points)
+            except ValueError:
+                return None
+            if selected is None:
+                return None
+            distance, selected_angle = selected
+        else:
+            distance = robust_lidar_range(
+                scan.ranges, angles, bearing, self.scan_window,
+                scan_min, scan_max,
+                minimum_points=self.minimum_lidar_points)
+            if distance is None:
+                return None
+            selected_angle = bearing
         if distance is None:
             return None
         scan_point = np.array([
-            distance*math.cos(bearing), distance*math.sin(bearing), 0.])
+            distance*math.cos(selected_angle),
+            distance*math.sin(selected_angle), 0.])
         map_point = np.array([t.x, t.y, t.z])+rotation@scan_point
         return map_point[:2] if np.all(np.isfinite(map_point)) else None
 
@@ -206,13 +235,18 @@ class StampedTargetLocalizer(Node):
                 r = np.array([math.tan(angle), xy[1], 1.])
                 return rotation @ (r/np.linalg.norm(r))
             centre = ray(msg.center_x, msg.center_y)
+            bbox_edges = (
+                ray(msg.center_x-msg.width/2, msg.center_y),
+                ray(msg.center_x+msg.width/2, msg.center_y),
+            )
             ground = None
             if self.ground_enabled and not vertical_boundary:
                 ground = map_ground_point(
                     origin, ray(msg.center_x, y2), self.ground_z,
                     self.rmin, self.rmax)
             stamp = msg.header.stamp.sec+msg.header.stamp.nanosec*1e-9
-            lidar = self._lidar_point(stamp, now, centre)
+            lidar = self._lidar_point(
+                stamp, now, centre, edge_directions=bbox_edges)
             if vertical_boundary:
                 range_point, source = choose_gated_point(
                     None, lidar, self.lidar_ground_gate, 'lidar_only')

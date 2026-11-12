@@ -31,6 +31,19 @@ class TestStampedLocalization(unittest.TestCase):
                                              mode='ground_only')[0])
         with self.assertRaises(ValueError):
             choose_gated_point([2., 1.], [2., 1.], mode='unknown')
+        point, method = choose_gated_point(
+            [2., 1.], [2.15, 1.], .2,
+            mode='nearest_lidar_then_ground')
+        np.testing.assert_allclose(point, [2.15, 1.])
+        self.assertEqual(method, 'lidar_bbox_nearest_consistent')
+        point, method = choose_gated_point(
+            [2., 1.], [2.25, 1.], .2,
+            mode='nearest_lidar_then_ground')
+        np.testing.assert_allclose(point, [2., 1.])
+        self.assertEqual(method, 'ground_lidar_rejected')
+        self.assertIsNone(choose_gated_point(
+            None, [2., 1.], .2,
+            mode='nearest_lidar_then_ground')[0])
 
     def test_vertical_bbox_boundary_requires_lidar_only(self):
         self.assertTrue(bbox_requires_lidar(320, 40, 100, 80, 640, 480))

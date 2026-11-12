@@ -7,6 +7,7 @@ from ee3033_search_policy.target_localization_core import (
     CameraModel,
     bbox_contact_pixel,
     choose_gated_range,
+    nearest_supported_lidar_cluster,
     pixel_to_camera_ray,
     ransac_triangulate,
     ray_ground_intersection,
@@ -42,6 +43,28 @@ def test_lidar_median_rejects_outlier_and_wall_return():
     distance, method = choose_gated_range(1.8, 4.5, gate_m=0.3)
     assert distance == pytest.approx(1.8)
     assert method == "ground_lidar_rejected"
+
+
+def test_nearest_bbox_cluster_beats_wall_majority_without_depth_gap_gate():
+    angles = np.linspace(-.12, .12, 13)
+    ranges = np.array([3., 3., 3., 3., 3., 1.06, 1.04,
+                       3., 3., 3., 3., 3., 3.])
+    selected = nearest_supported_lidar_cluster(
+        ranges, angles, 0., (-.08, .08), .01, .15, 4.,
+        minimum_points=2)
+    assert selected is not None
+    distance, angle = selected
+    assert distance == pytest.approx(1.05)
+    assert angle == pytest.approx(-.01, abs=.011)
+
+
+def test_nearest_bbox_cluster_does_not_accept_lone_short_return_raw():
+    angles = np.linspace(-.06, .06, 7)
+    ranges = [2., 2., 2., .3, 2., 2., 2.]
+    distance, _ = nearest_supported_lidar_cluster(
+        ranges, angles, 0., (-.06, .06), 0., .15, 4.,
+        minimum_points=2)
+    assert distance == pytest.approx(1.15)
 
 
 def test_weighted_triangulation_recovers_target():

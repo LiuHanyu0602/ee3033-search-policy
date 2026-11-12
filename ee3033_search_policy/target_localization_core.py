@@ -125,6 +125,51 @@ def robust_lidar_range(ranges, angles, target_bearing, window_rad,
     return float(np.median(values))
 
 
+def nearest_supported_lidar_cluster(
+        ranges, angles, target_bearing, edge_bearings, angular_margin_rad,
+        min_range, max_range, minimum_points=2):
+    """Select the nearest adjacent-beam support inside the bbox angle sector.
+
+    There is deliberately no required target-to-wall depth separation. This
+    selector itself does not apply the later camera-distance agreement gate.
+    A lone short return cannot be selected by itself because
+    ``minimum_points`` consecutive valid scan samples are required.
+    """
+    ranges = np.asarray(ranges, dtype=np.float64)
+    angles = np.asarray(angles, dtype=np.float64)
+    if ranges.shape != angles.shape or ranges.ndim != 1:
+        raise ValueError('LiDAR ranges and angles must be equal-length vectors')
+    count = int(minimum_points)
+    margin = float(angular_margin_rad)
+    if count < 1 or margin < 0 or not math.isfinite(margin):
+        raise ValueError('Invalid nearest-cluster configuration')
+    centre = float(target_bearing)
+    edges = np.asarray(edge_bearings, dtype=np.float64)
+    if edges.shape != (2,) or not np.all(np.isfinite(edges)):
+        raise ValueError('Two finite bbox edge bearings required')
+    edge_delta = np.arctan2(np.sin(edges-centre), np.cos(edges-centre))
+    lower, upper = float(np.min(edge_delta)-margin), float(np.max(edge_delta)+margin)
+    delta = np.arctan2(np.sin(angles-centre), np.cos(angles-centre))
+    valid = (np.isfinite(ranges) & np.isfinite(angles) &
+             (ranges >= float(min_range)) & (ranges <= float(max_range)) &
+             (delta >= lower) & (delta <= upper))
+    indices = np.flatnonzero(valid)
+    best = None
+    for offset in range(max(0, len(indices)-count+1)):
+        window = indices[offset:offset+count]
+        if len(window) != count or np.any(np.diff(window) != 1):
+            continue
+        distance = float(np.median(ranges[window]))
+        angle = math.atan2(
+            float(np.mean(np.sin(angles[window]))),
+            float(np.mean(np.cos(angles[window]))),
+        )
+        score = (distance, abs(wrap_angle(angle-centre)))
+        if best is None or score < best[0]:
+            best = (score, distance, angle)
+    return None if best is None else (best[1], best[2])
+
+
 def choose_gated_range(ground_range, lidar_range, gate_m=0.35,
                        prefer_lidar=True):
     """Reject a likely wall return when LiDAR disagrees with ground geometry."""
