@@ -834,7 +834,7 @@ NCNN YOLO, MLP search, stamped target localization, and return to the captured
 mapping start pose.
 
 Before loading the saved map, the workflow conservatively removes a singleton
-occupied pixel only when all other 24 cells in its complete 5x5 neighborhood
+occupied pixel only when all other eight cells in its complete 3x3 neighborhood
 are known free. The original raster is retained as `<map-prefix>.raw.pgm`.
 
 ```bash

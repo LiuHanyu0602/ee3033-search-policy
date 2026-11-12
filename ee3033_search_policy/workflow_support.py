@@ -158,14 +158,14 @@ def _map_thresholds(yaml_path):
     return negate, occupied, free
 
 
-def clean_isolated_occupied_pixels(yaml_path, pgm_path, radius=2):
-    """Remove only occupied cells whose complete 5x5 neighborhood is free.
+def clean_isolated_occupied_pixels(yaml_path, pgm_path, radius=1):
+    """Remove only occupied cells whose complete 3x3 neighborhood is free.
 
     The original raster is retained as ``<prefix>.raw.pgm``. Unknown cells do
     not satisfy the free-neighbor test, so map boundaries are unchanged.
     """
-    if radius != 2:
-        raise ValueError('The validated isolated-cell filter requires radius=2')
+    if radius != 1:
+        raise ValueError('The validated isolated-cell filter requires radius=1')
     yaml_path, pgm_path = Path(yaml_path), Path(pgm_path)
     width, height, maxval, pixels = _read_pgm(pgm_path)
     negate, occupied_threshold, free_threshold = _map_thresholds(yaml_path)
@@ -195,7 +195,7 @@ def clean_isolated_occupied_pixels(yaml_path, pgm_path, radius=2):
                     neighbors.append(pixels[index])
                 if not all_free:
                     break
-            if all_free and len(neighbors) == 24:
+            if all_free and len(neighbors) == 8:
                 replacements.append((center, sorted(neighbors)[len(neighbors)//2]))
 
     raw_path = Path(str(pgm_path.with_suffix(''))+'.raw.pgm')

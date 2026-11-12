@@ -47,8 +47,8 @@ After `DONE`, the workflow automatically:
 
 - records the SLAM-frame pose immediately after mapping becomes ready;
 - saves and hashes the new map;
-- removes only isolated occupied pixels whose other 24 cells in a complete
-  5x5 neighborhood are all known free, retaining the original as
+- removes only isolated occupied pixels whose other eight cells in a complete
+  3x3 neighborhood are all known free, retaining the original as
   `<map-prefix>.raw.pgm`;
 - stops SLAM and starts known-map Nav2 with that map;
 - publishes the captured pose to AMCL and verifies localization;
@@ -123,7 +123,7 @@ The cleanup runs after `map_saver_cli` succeeds and before the new map is
 loaded by Nav2. It uses `negate`, `occupied_thresh`, and `free_thresh` from the
 saved YAML rather than assuming raw black/white values. Unknown cells are not
 treated as free. Border cells, walls, connected obstacle pixels, and any cell
-with an occupied or unknown neighbor in its 5x5 window are retained.
+with an occupied or unknown neighbor in its 3x3 window are retained.
 
 The cleaned PGM remains the YAML's active image. The untouched raster is stored
 as `<map-prefix>.raw.pgm`; the run JSON records both hashes and the number of
