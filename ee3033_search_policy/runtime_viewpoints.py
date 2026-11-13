@@ -26,6 +26,7 @@ class CandidateViewpoints:
     clearance_m: np.ndarray
     observable_mask: np.ndarray
     safe_mask: np.ndarray
+    clearance_grid_m: np.ndarray
 
     def __len__(self):
         return int(self.rows.size)
@@ -203,7 +204,7 @@ def generate_viewpoints_from_grid(
     values,
     geometry,
     spacing_m=0.75,
-    clearance_m=0.15,
+    clearance_m=0.18,
     camera_fov_deg=70.0,
     camera_range_m=3.0,
     headings_per_position=4,
@@ -267,4 +268,5 @@ def generate_viewpoints_from_grid(
         clearance_m=np.asarray(candidate_clearance, dtype=np.float32),
         observable_mask=np.any(visibility, axis=0) & free,
         safe_mask=safe,
+        clearance_grid_m=clearance,
     )

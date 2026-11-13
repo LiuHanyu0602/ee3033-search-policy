@@ -92,7 +92,8 @@ def main():
     parser.add_argument('--run-json', required=True, type=Path)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--spacing-m', type=float, default=.75)
-    parser.add_argument('--clearance-m', type=float, default=.15)
+    parser.add_argument('--clearance-m', type=float, default=.18)
+    parser.add_argument('--connectivity-clearance-m', type=float, default=.15)
     args = parser.parse_args()
 
     values, geometry, image_path = load_saved_map(args.map_yaml)
@@ -117,7 +118,7 @@ def main():
 
     free, _, _ = classify_cells(values, 20, 65)
     clearance = clearance_map(free, geometry.resolution)
-    safe = free & (clearance >= args.clearance_m)
+    safe = free & (clearance >= args.connectivity_clearance_m)
     reachable = reachable_component(safe, start_cell)
     position_reachable = reachable[candidates.rows, candidates.cols]
 
@@ -164,7 +165,8 @@ def main():
     figure.suptitle(
         f'{args.map_yaml.name} | origin={geometry.origin_x:.2f},'
         f'{geometry.origin_y:.2f},{geometry.origin_yaw:.2f} | '
-        f'clearance={args.clearance_m:.2f} m')
+        f'candidate clearance={args.clearance_m:.2f} m | '
+        f'connectivity clearance={args.connectivity_clearance_m:.2f} m')
     figure.savefig(output, dpi=180)
     plt.close(figure)
 

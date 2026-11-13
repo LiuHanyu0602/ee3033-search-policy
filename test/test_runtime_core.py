@@ -39,6 +39,7 @@ def test_runtime_viewpoints_have_four_orientations_and_world_yaw():
     assert len(result) > 0 and len(result) % 4 == 0
     assert result.visibility_masks.shape == (len(result), 12, 12)
     assert np.all(result.clearance_m >= 0.15)
+    assert result.clearance_grid_m.shape == values.shape
     assert result.headings[0] == pytest.approx(np.pi / 2)
     assert np.any(result.observable_mask)
 
@@ -93,10 +94,10 @@ def test_runtime_viewpoints_on_tracked_real_map_fixture():
     result = generate_viewpoints_from_grid(values, geometry)
 
     assert np.count_nonzero(free) == 22298
-    assert len(result) == 440
+    assert len(result) == 436
     assert np.count_nonzero(result.observable_mask) == 22230
     assert np.all(free[result.rows, result.cols])
-    assert np.all(result.clearance_m >= 0.15)
+    assert np.all(result.clearance_m >= 0.18)
     assert not np.any(result.visibility_masks & ~free)
     assert np.array_equal(
         result.observable_mask, np.any(result.visibility_masks, axis=0) & free,

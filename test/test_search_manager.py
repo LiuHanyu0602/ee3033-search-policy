@@ -225,8 +225,11 @@ def test_initial_shortlist_excludes_candidates_outside_start_component(api, mana
     manager.geometry = GridGeometry(7, 5, 1.0)
     safe = np.ones((5, 7), dtype=bool)
     safe[:, 3] = False
+    candidate_safe = safe.copy()
+    candidate_safe[1, 1] = False  # Start need not satisfy endpoint clearance.
     manager.candidates = Candidates(
-        safe_mask=safe,
+        safe_mask=candidate_safe,
+        clearance_grid_m=np.where(safe, 0.15, 0.0),
         rows=np.array([1, 1, 2, 2], dtype=np.int32),
         cols=np.array([1, 5, 2, 6], dtype=np.int32),
         world_x=np.array([1.5, 5.5, 2.5, 6.5]),
@@ -246,6 +249,7 @@ def test_initial_shortlist_excludes_candidates_outside_start_component(api, mana
     manager.time_discount = 20.0
     manager.shortlist_size = manager.planning_candidates = 4
     manager.clearance = 0.15
+    manager.connectivity_clearance = 0.15
     manager._plan_next.reset_mock()
 
     api.SearchManager._begin_decision(manager, (1.5, 1.5, 0.0))
@@ -259,12 +263,14 @@ def test_unsafe_start_fails_closed_before_planning(api, manager):
     manager.geometry = GridGeometry(3, 3, 1.0)
     manager.candidates = NS(
         safe_mask=np.zeros((3, 3), dtype=bool),
+        clearance_grid_m=np.zeros((3, 3), dtype=float),
         rows=np.array([1], dtype=np.int32),
         cols=np.array([1], dtype=np.int32),
     )
     manager.failure_counts = np.zeros(1, dtype=np.int32)
     manager.failure_times = np.full(1, -np.inf)
     manager.clearance = 0.15
+    manager.connectivity_clearance = 0.15
     manager._plan_next.reset_mock()
 
     api.SearchManager._begin_decision(manager, (1.5, 1.5, 0.0))

@@ -111,6 +111,28 @@ Do not substitute `balance_object_detector`; it is the old reference-image match
 
 ## 5. Clean manual startup
 
+### Verified Nav2 inflation override
+
+The operator confirmed `inflation_radius: 0.17` as safe on this robot.  Apply
+only this override inside the Docker container before starting Nav2.  Refuse
+to edit if the expected two current `0.20` entries are not present; this
+protects every other instructor parameter:
+
+```bash
+EE3033_NAV2_PARAMS=/home/ros2_ws/install/balance_navigation/share/balance_navigation/config/nav2_core_params.yaml
+test "$(grep -Ec '^[[:space:]]*inflation_radius:[[:space:]]*0\.20[[:space:]]*$' "$EE3033_NAV2_PARAMS")" -eq 2 && \
+sed -i 's/inflation_radius: 0.20/inflation_radius: 0.17/g' "$EE3033_NAV2_PARAMS" && \
+test "$(grep -Ec '^[[:space:]]*inflation_radius:[[:space:]]*0\.17[[:space:]]*$' "$EE3033_NAV2_PARAMS")" -eq 2 && \
+grep -n 'inflation_radius' "$EE3033_NAV2_PARAMS"
+```
+
+Expected: exactly two `inflation_radius: 0.17` lines.  No build is required.
+An already-running Nav2 stack does not reread this file, so apply the override
+only while navigation is safely stopped, then start the known-map stack.  A
+later rebuild of `balance_navigation` may replace the installed file; repeat
+the verified override after such a rebuild.  Do not change the footprint,
+cost scaling, costmap resolution, or any other instructor parameter.
+
 ### Known-map navigation
 
 ```bash

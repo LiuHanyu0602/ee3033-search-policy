@@ -52,11 +52,12 @@ class SearchManager(Node):
             'navigate_action': '/navigate_to_pose', 'planner_id': 'GridBased',
             'navigation_enabled': False, 'return_home_enabled': True, 'weights_path': '',
             'single_goal_mode': True, 'max_navigation_goals': 1,
-            'candidate_spacing_m': 0.75, 'candidate_clearance_m': 0.15,
+            'candidate_spacing_m': 0.75, 'candidate_clearance_m': 0.18,
+            'connectivity_clearance_m': 0.15,
             'camera_fov_deg': 70.0, 'camera_range_m': 3.0,
             'headings_per_position': 4, 'free_threshold': 20,
             'occupied_threshold': 65, 'shortlist_size': 32,
-            'planning_candidates': 24, 'linear_speed_mps': 0.25,
+            'planning_candidates': 16, 'linear_speed_mps': 0.25,
             'angular_speed_rps': 0.8, 'observation_time_s': 0.25,
             'observation_position_tolerance_m': 0.15,
             'observation_yaw_tolerance_rad': 0.25,
@@ -79,6 +80,13 @@ class SearchManager(Node):
         if self.max_navigation_goals < 1:
             raise ValueError('max_navigation_goals must be at least 1')
         self.spacing, self.clearance = float(p('candidate_spacing_m')), float(p('candidate_clearance_m'))
+        self.connectivity_clearance = float(p('connectivity_clearance_m'))
+        if (not math.isfinite(self.connectivity_clearance) or
+                self.connectivity_clearance < 0.0 or
+                self.connectivity_clearance > self.clearance):
+            raise ValueError(
+                'connectivity_clearance_m must be finite, nonnegative, and '
+                'no greater than candidate_clearance_m')
         self.camera_fov, self.camera_range = float(p('camera_fov_deg')), float(p('camera_range_m'))
         self.heading_count = int(p('headings_per_position'))
         self.free_threshold, self.occupied_threshold = int(p('free_threshold')), int(p('occupied_threshold'))
@@ -307,7 +315,9 @@ class SearchManager(Node):
     def _begin_decision(self, pose):
         self.busy, self.current_pose = True, pose
         start_cell = world_to_grid(pose[0], pose[1], self.geometry)
-        connected_cells = reachable_component(self.candidates.safe_mask, start_cell)
+        traversable = (
+            self.candidates.clearance_grid_m >= self.connectivity_clearance)
+        connected_cells = reachable_component(traversable, start_cell)
         self.connected_candidates = connected_cells[
             self.candidates.rows, self.candidates.cols]
         if not np.any(self.connected_candidates):
@@ -316,7 +326,8 @@ class SearchManager(Node):
             self._status('ROBOT_POSE_NOT_IN_SAFE_COMPONENT')
             self.get_logger().error(
                 f'Robot cell {start_cell} is outside the connected candidate-safe '
-                f'space at {self.clearance:.3f} m clearance; no plan submitted',
+                f'space at {self.connectivity_clearance:.3f} m connectivity '
+                'clearance; no plan submitted',
                 throttle_duration_sec=2.0,
             )
             return
