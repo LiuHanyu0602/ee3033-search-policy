@@ -2,7 +2,6 @@
 """Offline overlay of generated viewpoints and Nav2 planning failures."""
 
 import argparse
-from collections import deque
 import json
 import math
 from pathlib import Path
@@ -19,6 +18,7 @@ from ee3033_search_policy.map_utils import (
 from ee3033_search_policy.runtime_viewpoints import (
     clearance_map,
     generate_viewpoints_from_grid,
+    reachable_component,
 )
 from ee3033_search_policy.workflow_support import _read_pgm
 
@@ -73,25 +73,6 @@ def parse_search_log(path):
     return generated, failures, selected
 
 
-def reachable_component(mask, start):
-    mask = np.asarray(mask, dtype=bool)
-    reachable = np.zeros_like(mask)
-    row, col = start
-    if not (0 <= row < mask.shape[0] and 0 <= col < mask.shape[1]) or not mask[row, col]:
-        return reachable
-    queue = deque([(row, col)])
-    reachable[row, col] = True
-    while queue:
-        row, col = queue.popleft()
-        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-            nr, nc = row+dr, col+dc
-            if (0 <= nr < mask.shape[0] and 0 <= nc < mask.shape[1] and
-                    mask[nr, nc] and not reachable[nr, nc]):
-                reachable[nr, nc] = True
-                queue.append((nr, nc))
-    return reachable
-
-
 def local_xy(world_x, world_y, geometry):
     dx, dy = world_x-geometry.origin_x, world_y-geometry.origin_y
     c, s = math.cos(geometry.origin_yaw), math.sin(geometry.origin_yaw)
@@ -111,7 +92,7 @@ def main():
     parser.add_argument('--run-json', required=True, type=Path)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--spacing-m', type=float, default=.75)
-    parser.add_argument('--clearance-m', type=float, default=.20)
+    parser.add_argument('--clearance-m', type=float, default=.15)
     args = parser.parse_args()
 
     values, geometry, image_path = load_saved_map(args.map_yaml)

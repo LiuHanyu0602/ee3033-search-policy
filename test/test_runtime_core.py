@@ -15,6 +15,7 @@ from ee3033_search_policy.runtime_viewpoints import (
     generate_viewpoints_from_grid,
     has_line_of_sight,
     raycast_visibility,
+    reachable_component,
 )
 
 
@@ -40,6 +41,30 @@ def test_runtime_viewpoints_have_four_orientations_and_world_yaw():
     assert np.all(result.clearance_m >= 0.15)
     assert result.headings[0] == pytest.approx(np.pi / 2)
     assert np.any(result.observable_mask)
+
+
+def test_runtime_viewpoints_never_use_or_see_unknown_cells():
+    values = np.zeros((12, 12), dtype=np.int8)
+    values[4:8, 4:8] = -1
+    geometry = GridGeometry(12, 12, 0.1)
+    result = generate_viewpoints_from_grid(
+        values, geometry, spacing_m=0.3, clearance_m=0.15,
+        camera_fov_deg=90.0, camera_range_m=1.0,
+    )
+    free, _, unknown = classify_cells(values)
+    assert np.all(free[result.rows, result.cols])
+    assert not np.any(unknown[result.rows, result.cols])
+    assert not np.any(result.visibility_masks & unknown)
+    assert not np.any(result.safe_mask & unknown)
+
+
+def test_reachable_component_excludes_disconnected_safe_space():
+    safe = np.ones((5, 7), dtype=bool)
+    safe[:, 3] = False
+    reachable = reachable_component(safe, (2, 1))
+    assert np.all(reachable[:, :3])
+    assert not np.any(reachable[:, 3:])
+    assert not np.any(reachable_component(safe, (2, 3)))
 
 
 def test_runtime_viewpoints_on_tracked_real_map_fixture():
@@ -68,10 +93,10 @@ def test_runtime_viewpoints_on_tracked_real_map_fixture():
     result = generate_viewpoints_from_grid(values, geometry)
 
     assert np.count_nonzero(free) == 22298
-    assert len(result) == 436
+    assert len(result) == 440
     assert np.count_nonzero(result.observable_mask) == 22230
     assert np.all(free[result.rows, result.cols])
-    assert np.all(result.clearance_m >= 0.20)
+    assert np.all(result.clearance_m >= 0.15)
     assert not np.any(result.visibility_masks & ~free)
     assert np.array_equal(
         result.observable_mask, np.any(result.visibility_masks, axis=0) & free,

@@ -26,7 +26,7 @@ from .map_utils import GridGeometry, occupancy_array, world_to_grid
 from .model import TinySearchPolicy
 from .nav2_client import Nav2Client
 from .policy_decision import select_with_fallback
-from .runtime_viewpoints import generate_viewpoints_from_grid
+from .runtime_viewpoints import generate_viewpoints_from_grid, reachable_component
 from .target_stop_guard import TargetStopGuard
 
 
@@ -52,11 +52,11 @@ class SearchManager(Node):
             'navigate_action': '/navigate_to_pose', 'planner_id': 'GridBased',
             'navigation_enabled': False, 'return_home_enabled': True, 'weights_path': '',
             'single_goal_mode': True, 'max_navigation_goals': 1,
-            'candidate_spacing_m': 0.75, 'candidate_clearance_m': 0.20,
+            'candidate_spacing_m': 0.75, 'candidate_clearance_m': 0.15,
             'camera_fov_deg': 70.0, 'camera_range_m': 3.0,
             'headings_per_position': 4, 'free_threshold': 20,
             'occupied_threshold': 65, 'shortlist_size': 32,
-            'planning_candidates': 16, 'linear_speed_mps': 0.25,
+            'planning_candidates': 24, 'linear_speed_mps': 0.25,
             'angular_speed_rps': 0.8, 'observation_time_s': 0.25,
             'observation_position_tolerance_m': 0.15,
             'observation_yaw_tolerance_rad': 0.25,
@@ -115,6 +115,7 @@ class SearchManager(Node):
         self.geometry = self.candidates = self.memory = None
         self.failure_counts = self.failure_times = None
         self.plan_indices = np.empty(0, dtype=np.int32)
+        self.connected_candidates = None
         self.path_distances = None
         self.plan_cursor = 0
         self.current_pose = self.active_plan = self.active_navigation = None
@@ -190,6 +191,7 @@ class SearchManager(Node):
                 self.free_threshold, self.occupied_threshold,
             )
             self.geometry, self.candidates = geometry, candidates
+            self.connected_candidates = None
             self.memory = CoverageMemory(candidates.observable_mask, len(candidates))
             self.failure_counts = np.zeros(len(candidates), dtype=np.int32)
             self.failure_times = np.full(len(candidates), -np.inf)
@@ -304,6 +306,20 @@ class SearchManager(Node):
 
     def _begin_decision(self, pose):
         self.busy, self.current_pose = True, pose
+        start_cell = world_to_grid(pose[0], pose[1], self.geometry)
+        connected_cells = reachable_component(self.candidates.safe_mask, start_cell)
+        self.connected_candidates = connected_cells[
+            self.candidates.rows, self.candidates.cols]
+        if not np.any(self.connected_candidates):
+            self.busy = False
+            self.retry_after = time.monotonic() + 1.0
+            self._status('ROBOT_POSE_NOT_IN_SAFE_COMPONENT')
+            self.get_logger().error(
+                f'Robot cell {start_cell} is outside the connected candidate-safe '
+                f'space at {self.clearance:.3f} m clearance; no plan submitted',
+                throttle_duration_sec=2.0,
+            )
+            return
         gains = self.memory.gains(self.candidates.visibility_masks)
         minimum = max(1, int(math.ceil(self.minimum_gain_m2 / self.geometry.resolution**2)))
         gains[gains < minimum] = 0
@@ -312,7 +328,8 @@ class SearchManager(Node):
         indices, _, _ = make_shortlist(
             gains, euclidean, turns, self.linear_speed, self.angular_speed,
             self.observation_time, self.time_discount,
-            max(self.shortlist_size, self.planning_candidates), self._blocked(),
+            max(self.shortlist_size, self.planning_candidates),
+            self._blocked() | ~self.connected_candidates,
         )
         if indices.size == 0:
             self._finish_search('NO_REMAINING_GAIN')
@@ -372,7 +389,8 @@ class SearchManager(Node):
         shortlist, _, utility = make_shortlist(
             gains, self.path_distances, turns, self.linear_speed,
             self.angular_speed, self.observation_time, self.time_discount,
-            self.shortlist_size, self._blocked(),
+            self.shortlist_size,
+            self._blocked() | ~self.connected_candidates,
         )
         if shortlist.size == 0:
             self._finish_search('NO_REACHABLE_GAIN')

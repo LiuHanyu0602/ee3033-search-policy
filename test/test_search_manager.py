@@ -217,6 +217,64 @@ def test_rotated_map_pose_can_record_home_and_then_plan(manager):
     manager._begin_decision.assert_called_once_with((x, y, 0.0))
 
 
+def test_initial_shortlist_excludes_candidates_outside_start_component(api, manager):
+    class Candidates(NS):
+        def __len__(self):
+            return len(self.rows)
+
+    manager.geometry = GridGeometry(7, 5, 1.0)
+    safe = np.ones((5, 7), dtype=bool)
+    safe[:, 3] = False
+    manager.candidates = Candidates(
+        safe_mask=safe,
+        rows=np.array([1, 1, 2, 2], dtype=np.int32),
+        cols=np.array([1, 5, 2, 6], dtype=np.int32),
+        world_x=np.array([1.5, 5.5, 2.5, 6.5]),
+        world_y=np.array([1.5, 1.5, 2.5, 2.5]),
+        headings=np.zeros(4),
+        visibility_masks=np.zeros((4, 5, 7), dtype=bool),
+    )
+    manager.memory = NS(gains=Mock(return_value=np.array([10, 1000, 8, 900])))
+    manager.failure_counts = np.zeros(4, dtype=np.int32)
+    manager.failure_times = np.full(4, -np.inf)
+    manager.max_failures = 2
+    manager.failure_cooldown = 60.0
+    manager.minimum_gain_m2 = 0.01
+    manager.linear_speed = 0.25
+    manager.angular_speed = 0.8
+    manager.observation_time = 0.25
+    manager.time_discount = 20.0
+    manager.shortlist_size = manager.planning_candidates = 4
+    manager.clearance = 0.15
+    manager._plan_next.reset_mock()
+
+    api.SearchManager._begin_decision(manager, (1.5, 1.5, 0.0))
+
+    assert manager.connected_candidates.tolist() == [True, False, True, False]
+    assert set(manager.plan_indices.tolist()) == {0, 2}
+    manager._plan_next.assert_called_once_with()
+
+
+def test_unsafe_start_fails_closed_before_planning(api, manager):
+    manager.geometry = GridGeometry(3, 3, 1.0)
+    manager.candidates = NS(
+        safe_mask=np.zeros((3, 3), dtype=bool),
+        rows=np.array([1], dtype=np.int32),
+        cols=np.array([1], dtype=np.int32),
+    )
+    manager.failure_counts = np.zeros(1, dtype=np.int32)
+    manager.failure_times = np.full(1, -np.inf)
+    manager.clearance = 0.15
+    manager._plan_next.reset_mock()
+
+    api.SearchManager._begin_decision(manager, (1.5, 1.5, 0.0))
+
+    assert not manager.busy
+    assert manager.retry_after == 101.0
+    manager._status.assert_called_once_with('ROBOT_POSE_NOT_IN_SAFE_COMPONENT')
+    manager._plan_next.assert_not_called()
+
+
 def test_planner_rejection_backs_off_without_blacklisting(api, manager, monkeypatch):
     manager.busy = True
     future = Future()

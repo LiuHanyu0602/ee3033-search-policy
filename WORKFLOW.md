@@ -357,7 +357,8 @@ RViz 确认地图覆盖和激光对齐。新场地不复用旧地图或旧覆盖
 tf2 工具启动初期等待后能获取变换不自动判失败；timeout 结束信号是预期。
 不能仅凭两分钟前的静止 AMCL 保留消息断定定位不实时，也不能凭有 TF
 就断定定位准确。base_footprint / odom_combined 是当天实测名称，不是通用常量。
-候选 clearance=0.20 m 不是已验收机器人 footprint；运动前仍核实实际安全空间。
+候选 clearance=0.15 m 已由操作员确认为当前机器人安全阈值；它仍不替代
+Nav2 footprint、默认 inflation 和碰撞检查。
 本次保存地图栈没有 /scan_fixed，用 /scan。若某 Topic 最初提示未发布，
 应看随后是否收到数据，不能忽略一直没有样本的情况，也不盲目启动重采样。
 

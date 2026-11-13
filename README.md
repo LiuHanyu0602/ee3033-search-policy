@@ -678,18 +678,22 @@ localization health, planner lifecycle readiness, or physical navigation safety.
 
 ### Runtime data flow
 
-1. `/map` and `map -> base_footprint` generate safe oriented viewpoints.
-2. Coverage memory computes new visible area for every viewpoint.
-3. Nav2 `/compute_path_to_pose` supplies real path distances.
-4. The training-equivalent 32-candidate shortlist and 12 features are built.
-5. Tiny MLP selects a viewpoint; invalid inference falls back to the immediate
+1. `/map` generates oriented viewpoints only on known-free cells with the
+   operator-confirmed 0.15 m clearance; unknown/ambiguous cells are blocked.
+2. `map -> base_footprint` restricts the first shortlist to the robot's
+   four-connected safe-space component.
+3. Coverage memory computes new visible area for every viewpoint.
+4. Nav2 `/compute_path_to_pose` supplies real path distances for up to 24
+   connected preliminary candidates.
+5. Up to 24 path-valid candidates receive the training-consistent 12 features.
+6. Tiny MLP selects a viewpoint; invalid inference falls back to the immediate
    time-aware score.
-6. Nav2 executes one goal. Coverage is committed only after success and the
+7. Nav2 executes one goal. Coverage is committed only after success and the
    observation dwell time.
-7. Navigation failure counts temporarily blacklist repeated unreachable goals.
-8. A confirmed target latches `/target_found`, cancels the active goal and
+8. Navigation failure counts temporarily blacklist repeated unreachable goals.
+9. A confirmed target latches `/target_found`, cancels the active goal and
    prevents all later dispatch.
-9. RGB bearing plus LaserScan (or calibrated ground-plane fallback) publishes
+10. RGB bearing plus LaserScan (or calibrated ground-plane fallback) publishes
    the target in the map frame.
 
 ### Nodes
@@ -760,7 +764,8 @@ the robot raised or in a controlled test area.
 Software interfaces are present, but these values cannot be inferred safely
 without the robot:
 
-- `candidate_clearance_m` versus the real footprint and Nav2 inflation;
+- future changes to `candidate_clearance_m=0.15` versus the verified robot
+  geometry and Nav2's default inflation configuration;
 - `camera_pitch_down_rad` and camera optical-axis convention;
 - `camera_yaw_offset_rad` and `laser_yaw_offset_rad`;
 - whether the 2-D laser intersects the target rather than the wall behind it;

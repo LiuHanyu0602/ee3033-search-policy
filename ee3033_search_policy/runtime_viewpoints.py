@@ -4,6 +4,7 @@ The module has no ROS imports.  A ROS node can pass the array returned by
 ``map_utils.occupancy_array`` together with ``GridGeometry``.
 """
 
+from collections import deque
 from dataclasses import dataclass
 import heapq
 from math import cos, hypot, isfinite, pi, sin, sqrt
@@ -24,6 +25,7 @@ class CandidateViewpoints:
     visibility_masks: np.ndarray
     clearance_m: np.ndarray
     observable_mask: np.ndarray
+    safe_mask: np.ndarray
 
     def __len__(self):
         return int(self.rows.size)
@@ -85,6 +87,37 @@ def clearance_map(free_mask, resolution):
     result = np.minimum(obstacle, edge) * resolution
     result[~free] = 0.0
     return result.astype(np.float32)
+
+
+def reachable_component(safe_mask, start):
+    """Return the four-connected safe component containing ``start``.
+
+    Four-connectivity deliberately prevents diagonal corner cutting.  An
+    out-of-map or unsafe start returns an empty component so callers can fail
+    closed before submitting a planning request.
+    """
+    safe = np.asarray(safe_mask, dtype=bool)
+    if safe.ndim != 2 or not safe.size:
+        raise ValueError("safe_mask must be a non-empty 2-D array")
+    if not isinstance(start, tuple) or len(start) != 2:
+        raise ValueError("start must be a (row, column) tuple")
+    row, col = start
+    if not isinstance(row, (int, np.integer)) or not isinstance(col, (int, np.integer)):
+        raise ValueError("start indices must be integers")
+    reachable = np.zeros_like(safe)
+    if not (0 <= row < safe.shape[0] and 0 <= col < safe.shape[1]) or not safe[row, col]:
+        return reachable
+    queue = deque([(int(row), int(col))])
+    reachable[row, col] = True
+    while queue:
+        row, col = queue.popleft()
+        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            nr, nc = row + dr, col + dc
+            if (0 <= nr < safe.shape[0] and 0 <= nc < safe.shape[1] and
+                    safe[nr, nc] and not reachable[nr, nc]):
+                reachable[nr, nc] = True
+                queue.append((nr, nc))
+    return reachable
 
 
 def generate_candidate_positions(safe_mask, clearance_m, spacing_px):
@@ -170,7 +203,7 @@ def generate_viewpoints_from_grid(
     values,
     geometry,
     spacing_m=0.75,
-    clearance_m=0.20,
+    clearance_m=0.15,
     camera_fov_deg=70.0,
     camera_range_m=3.0,
     headings_per_position=4,
@@ -233,4 +266,5 @@ def generate_viewpoints_from_grid(
         visibility_masks=visibility,
         clearance_m=np.asarray(candidate_clearance, dtype=np.float32),
         observable_mask=np.any(visibility, axis=0) & free,
+        safe_mask=safe,
     )

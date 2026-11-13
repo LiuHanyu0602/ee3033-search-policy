@@ -17,6 +17,8 @@ search_manager:
     navigation_enabled: false
     single_goal_mode: false
     max_navigation_goals: 100
+    candidate_clearance_m: 0.15
+    planning_candidates: 24
     return_home_enabled: false
     exclusive_navigation_verified: true
     robot_geometry_verified: true

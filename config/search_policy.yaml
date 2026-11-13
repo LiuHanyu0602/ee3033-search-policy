@@ -83,9 +83,10 @@ search_manager:
     return_home_enabled: true
     weights_path: ''
 
-    # Must later be calibrated against the physical robot and camera.
+    # 0.15 m clearance is operator-confirmed safe for the current robot.
+    # Nav2 remains the collision-aware authority for every dispatched goal.
     candidate_spacing_m: 0.75
-    candidate_clearance_m: 0.20
+    candidate_clearance_m: 0.15
     camera_fov_deg: 70.0
     camera_range_m: 3.0
     headings_per_position: 4
@@ -94,7 +95,7 @@ search_manager:
 
     # Keep these consistent with the offline expert-data generator.
     shortlist_size: 32
-    planning_candidates: 16
+    planning_candidates: 24
     linear_speed_mps: 0.25
     angular_speed_rps: 0.8
     observation_time_s: 0.25
