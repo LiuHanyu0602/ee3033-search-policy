@@ -41,6 +41,7 @@ from .workflow_support import (
     clean_isolated_occupied_pixels,
     file_sha256,
     saved_map_files,
+    validate_saved_map_thresholds,
     planar_pose_error,
     validate_new_map_prefix,
 )
@@ -709,6 +710,8 @@ class RealRobotWorkflow:
             'ros2', 'run', 'nav2_map_server', 'map_saver_cli',
             '-f', str(self.map_prefix), '-t', '/map', '--fmt', 'pgm',
             '--ros-args', '-p', 'save_map_timeout:=10.0',
+            '-p', 'free_thresh_default:=0.196',
+            '-p', 'occupied_thresh_default:=0.65',
         ]
         try:
             result = subprocess.run(
@@ -725,6 +728,7 @@ class RealRobotWorkflow:
         if result.returncode != 0:
             raise WorkflowError('Map saver failed:\n'+result.stdout[-3000:])
         yaml_path, pgm_path = saved_map_files(self.map_prefix)
+        validate_saved_map_thresholds(yaml_path)
         cleanup = clean_isolated_occupied_pixels(yaml_path, pgm_path)
         # Revalidate the rewritten map before any map server can consume it.
         saved_map_files(self.map_prefix)

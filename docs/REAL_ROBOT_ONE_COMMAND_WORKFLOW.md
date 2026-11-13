@@ -125,6 +125,12 @@ saved YAML rather than assuming raw black/white values. Unknown cells are not
 treated as free. Border cells, walls, connected obstacle pixels, and any cell
 with an occupied or unknown neighbor in its 3x3 window are retained.
 
+The workflow explicitly saves with `free_thresh_default=0.196` and validates
+the generated YAML before cleanup.  This keeps PGM gray 205 at occupancy
+probability `50/255 = 0.196078...` on the unknown side of the strict free
+threshold instead of reloading it as free.  A generated YAML containing the
+Nav2 CLI default `free_thresh: 0.25` fails closed before cleanup or Nav2 load.
+
 The cleaned PGM remains the YAML's active image. The untouched raster is stored
 as `<map-prefix>.raw.pgm`; the run JSON records both hashes and the number of
 removed cells. Live Nav2 obstacle layers continue to mark obstacles seen by the

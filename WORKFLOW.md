@@ -286,9 +286,16 @@ RViz 确认地图覆盖和激光对齐。新场地不复用旧地图或旧覆盖
   elif [ -e "${MAP_PREFIX}.yaml" ] || [ -e "${MAP_PREFIX}.pgm" ]; then
     printf 'STOP: choose a new map filename\n'
   else
-    ros2 run nav2_map_server map_saver_cli -f "$MAP_PREFIX" -t /map --fmt pgm
+    ros2 run nav2_map_server map_saver_cli -f "$MAP_PREFIX" -t /map --fmt pgm \
+      --ros-args \
+      -p free_thresh_default:=0.196 \
+      -p occupied_thresh_default:=0.65
   fi
 ```
+
+`free_thresh_default=0.196` is mandatory for these PGM maps.  It keeps gray
+205 (`1-205/255=0.196078...`) as unknown when the saved map is reloaded;
+`0.25` incorrectly reloads that gray exterior as free.
 
 本次预期生成 map_test_1103.yaml 和 map_test_1103.pgm，位于上述 Pi Docker
 仓库 maps 目录，不保存到课程原示例的 balance_mapping/maps。

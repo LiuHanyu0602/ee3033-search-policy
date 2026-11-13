@@ -13,6 +13,9 @@ TERMINAL_MISSION_STATES = frozenset({
     'OPERATOR_STOPPED', 'MISSION_TIMEOUT', 'FAULT', 'STOP_UNVERIFIED',
 })
 
+SAVED_MAP_FREE_THRESHOLD = 0.196
+SAVED_MAP_OCCUPIED_THRESHOLD = 0.65
+
 
 def map_output_paths(prefix):
     prefix = Path(prefix)
@@ -155,6 +158,24 @@ def _map_thresholds(yaml_path):
         raise ValueError('Map YAML is missing valid occupancy thresholds') from exc
     if negate not in (0, 1) or not 0 <= free < occupied <= 1:
         raise ValueError('Map YAML occupancy thresholds are inconsistent')
+    return negate, occupied, free
+
+
+def validate_saved_map_thresholds(
+        yaml_path,
+        expected_free=SAVED_MAP_FREE_THRESHOLD,
+        expected_occupied=SAVED_MAP_OCCUPIED_THRESHOLD):
+    """Fail closed unless saved-map thresholds preserve gray unknown cells."""
+    negate, occupied, free = _map_thresholds(yaml_path)
+    if negate != 0:
+        raise ValueError('Saved map must use negate: 0')
+    if not math.isclose(free, expected_free, rel_tol=0.0, abs_tol=1e-9):
+        raise ValueError(
+            f'Saved map free_thresh={free} does not preserve unknown cells; '
+            f'expected {expected_free}')
+    if not math.isclose(occupied, expected_occupied, rel_tol=0.0, abs_tol=1e-9):
+        raise ValueError(
+            f'Saved map occupied_thresh={occupied}; expected {expected_occupied}')
     return negate, occupied, free
 
 
