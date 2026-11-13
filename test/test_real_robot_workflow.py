@@ -6,9 +6,11 @@ from ee3033_search_policy.workflow_support import (
     PlanarPose,
     angular_error,
     clean_isolated_occupied_pixels,
+    load_saved_home_pose,
     saved_map_files,
     planar_pose_error,
     validate_saved_map_thresholds,
+    validate_existing_map_yaml,
     validate_new_map_prefix,
 )
 
@@ -33,6 +35,40 @@ def test_saved_map_validation_requires_matching_image(tmp_path):
         'image: map_new.pgm\nresolution: 0.05\n', encoding='utf-8')
     assert saved_map_files(prefix) == (
         prefix.with_suffix('.yaml'), prefix.with_suffix('.pgm'))
+
+
+def test_existing_map_loads_recorded_home_without_overwriting_map(tmp_path):
+    prefix = write_test_map(tmp_path, [205]*81)
+    prefix.with_suffix('.run.json').write_text(
+        '{"home":{"x":1.25,"y":-0.5,"yaw":0.75}}\n', encoding='utf-8')
+    assert validate_existing_map_yaml(prefix.with_suffix('.yaml')) == prefix
+    pose, source = load_saved_home_pose(prefix)
+    assert pose == PlanarPose(1.25, -0.5, 0.75)
+    assert source == str(prefix.with_suffix('.run.json'))
+
+
+def test_existing_map_accepts_complete_explicit_home_override(tmp_path):
+    prefix = write_test_map(tmp_path, [205]*81)
+    pose, source = load_saved_home_pose(prefix, 2.0, 3.0, -0.25)
+    assert pose == PlanarPose(2.0, 3.0, -0.25)
+    assert source == 'explicit arguments'
+    with pytest.raises(ValueError, match='x, y, and yaw together'):
+        load_saved_home_pose(prefix, 2.0, None, -0.25)
+    with pytest.raises(ValueError, match='run summary'):
+        load_saved_home_pose(prefix)
+
+
+def test_existing_map_requires_absolute_yaml_with_valid_thresholds(tmp_path):
+    prefix = write_test_map(tmp_path, [205]*81)
+    with pytest.raises(ValueError, match='absolute path'):
+        validate_existing_map_yaml('relative.yaml')
+    with pytest.raises(ValueError, match=r'\.yaml file'):
+        validate_existing_map_yaml(prefix.with_suffix('.yml'))
+    prefix.with_suffix('.yaml').write_text(
+        prefix.with_suffix('.yaml').read_text().replace('0.196', '0.25'),
+        encoding='utf-8')
+    with pytest.raises(ValueError, match='does not preserve unknown'):
+        validate_existing_map_yaml(prefix.with_suffix('.yaml'))
 
 
 def test_pose_and_angle_validation():
@@ -121,6 +157,7 @@ def test_workflow_contains_complete_owned_process_sequence():
         assert required in workflow
     assert 'shell=True' not in workflow
     assert '--map-prefix' in workflow
+    assert '--existing-map' in workflow
     assert '--navigation-enabled' in workflow
     assert 'usb_cam_timestamp_test.hZhIXi' in wrapper
     assert 'required_frames: 1' in config

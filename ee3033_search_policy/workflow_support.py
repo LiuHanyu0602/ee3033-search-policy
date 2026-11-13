@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import hashlib
+import json
 import math
 from pathlib import Path
 import shutil
@@ -58,6 +59,43 @@ def validate_new_map_prefix(value):
     if existing:
         raise ValueError('Refusing to overwrite existing map file(s): '+', '.join(existing))
     return prefix
+
+
+def validate_existing_map_yaml(value):
+    """Return the prefix of an absolute, complete saved-map YAML file."""
+    yaml_path = Path(str(value)).expanduser()
+    if not yaml_path.is_absolute():
+        raise ValueError('Existing map YAML must be an absolute path')
+    if yaml_path.suffix != '.yaml':
+        raise ValueError('Existing map must be a .yaml file')
+    prefix = yaml_path.with_suffix('')
+    loaded_yaml, _ = saved_map_files(prefix)
+    validate_saved_map_thresholds(loaded_yaml)
+    return prefix
+
+
+def load_saved_home_pose(prefix, x=None, y=None, yaw=None):
+    """Load a saved workflow home pose, or validate an explicit override."""
+    supplied = (x is not None, y is not None, yaw is not None)
+    if any(supplied):
+        if not all(supplied):
+            raise ValueError(
+                'Existing-map initial pose requires x, y, and yaw together')
+        return PlanarPose(float(x), float(y), float(yaw)), 'explicit arguments'
+
+    summary_path = Path(str(Path(prefix))+'.run.json')
+    if not summary_path.is_file():
+        raise ValueError(
+            f'Existing map requires its run summary or an explicit initial pose: '
+            f'{summary_path}')
+    try:
+        summary = json.loads(summary_path.read_text(encoding='utf-8'))
+        home = summary['home']
+        pose = PlanarPose(float(home['x']), float(home['y']), float(home['yaw']))
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f'Existing map run summary has no valid home pose: {summary_path}') from exc
+    return pose, str(summary_path)
 
 
 def file_sha256(path):

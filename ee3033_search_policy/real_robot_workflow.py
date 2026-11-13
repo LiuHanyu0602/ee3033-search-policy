@@ -1,4 +1,4 @@
-"""Interactive one-command SLAM -> search -> report -> return workflow."""
+"""Interactive one-command new- or saved-map search and return workflow."""
 
 import argparse
 from collections import deque
@@ -40,7 +40,9 @@ from .workflow_support import (
     angular_error,
     clean_isolated_occupied_pixels,
     file_sha256,
+    load_saved_home_pose,
     saved_map_files,
+    validate_existing_map_yaml,
     validate_saved_map_thresholds,
     planar_pose_error,
     validate_new_map_prefix,
@@ -360,15 +362,29 @@ class WorkflowNode(Node):
 class RealRobotWorkflow:
     def __init__(self, args):
         self.args = args
-        self.map_prefix = validate_new_map_prefix(args.map_prefix)
+        self.existing_map = args.existing_map is not None
+        if self.existing_map:
+            self.map_prefix = validate_existing_map_yaml(args.existing_map)
+            self.home, self.home_source = load_saved_home_pose(
+                self.map_prefix,
+                args.initial_pose_x, args.initial_pose_y, args.initial_pose_yaw)
+        else:
+            self.map_prefix = validate_new_map_prefix(args.map_prefix)
+            self.home = None
+            self.home_source = 'mapping start'
         self.environment = os.environ.copy()
         timestamp = time.strftime('%Y%m%dT%H%M%S')
         self.log_dir = Path(tempfile.gettempdir()) / f'ee3033_workflow_{timestamp}'
         self.log_dir.mkdir(parents=True, exist_ok=False)
-        self.summary_path = Path(str(self.map_prefix)+'.run.json')
+        if self.existing_map:
+            self.summary_path = Path(
+                str(self.map_prefix)+f'.search_{timestamp}.run.json')
+        else:
+            self.summary_path = Path(str(self.map_prefix)+'.run.json')
         self.summary = {
             'started_at': timestamp,
             'map_prefix': str(self.map_prefix),
+            'map_mode': 'existing' if self.existing_map else 'new',
             'status': 'STARTING',
         }
         self.processes = []
@@ -461,14 +477,35 @@ class RealRobotWorkflow:
     def prompt_start(self):
         if not sys.stdin.isatty():
             raise WorkflowError('Interactive terminal required for operator confirmations')
+        if self.existing_map:
+            input(
+                '[OPERATOR] Place the robot near the saved initial pose '
+                f'(x={self.home.x:.3f}, y={self.home.y:.3f}, '
+                f'yaw={self.home.yaw:.3f}), clear the floor, keep the E-stop '
+                'ready, then press ENTER: ')
+            return
         input(
             '[OPERATOR] Clear the floor, keep the E-stop ready, then press ENTER '
             'to start the real robot workflow: ')
 
-    def run(self):
-        self.info(f'run logs: {self.log_dir}')
-        self.info(f'new map: {self.map_prefix}.yaml/.pgm')
-        self.prompt_start()
+    def prepare_map(self):
+        if self.existing_map:
+            yaml_path, pgm_path = saved_map_files(self.map_prefix)
+            validate_saved_map_thresholds(yaml_path)
+            self.summary['home'] = {
+                'x': self.home.x, 'y': self.home.y, 'yaw': self.home.yaw}
+            self.summary['existing_map_source'] = {
+                'yaml': str(yaml_path),
+                'pgm': str(pgm_path),
+                'yaml_sha256': file_sha256(yaml_path),
+                'pgm_sha256': file_sha256(pgm_path),
+                'home_source': self.home_source,
+            }
+            self._write_summary()
+            self.info(
+                f'existing map selected: {yaml_path}; '
+                f'home pose source: {self.home_source}')
+            return self.home
 
         mapping = self.start_process('mapping', [
             'ros2', 'launch', 'balance_bringup',
@@ -525,19 +562,27 @@ class RealRobotWorkflow:
         except AttributeError:
             pass
         time.sleep(2.0)
+        return home
+
+    def run(self):
+        self.info(f'run logs: {self.log_dir}')
+        if self.existing_map:
+            self.info(f'existing map: {self.map_prefix}.yaml')
+        else:
+            self.info(f'new map: {self.map_prefix}.yaml/.pgm')
+        self.prompt_start()
+        home = self.prepare_map()
 
         nav = self.start_process('known_map_nav2', [
             'ros2', 'launch', 'balance_bringup',
             'balance_known_map_waypoint_bringup.launch.py',
             f'map:={self.map_prefix}.yaml', 'start_waypoints:=false',
         ])
-        lifecycle_nodes = (
-            'map_server', 'amcl', 'planner_server', 'controller_server',
-            'bt_navigator', 'velocity_smoother',
-        )
+        localization_nodes = ('map_server', 'amcl')
         self.wait_for(
-            'Nav2 lifecycle nodes',
-            lambda: all(self.node.lifecycle_active(name) for name in lifecycle_nodes),
+            'saved map and localization lifecycle nodes',
+            lambda: (self.node.recent('map', 5.0) and all(
+                self.node.lifecycle_active(name) for name in localization_nodes)),
             self.args.nav_timeout,
             (nav,),
         )
@@ -545,6 +590,17 @@ class RealRobotWorkflow:
         self.node.publish_initial_pose(home)
         self.wait_for_amcl_convergence(
             home, amcl_serial, self.args.nav_timeout, (nav,))
+        navigation_nodes = (
+            'planner_server', 'controller_server',
+            'bt_navigator', 'velocity_smoother',
+        )
+        self.wait_for(
+            'Nav2 navigation lifecycle nodes',
+            lambda: all(
+                self.node.lifecycle_active(name) for name in navigation_nodes),
+            self.args.nav_timeout,
+            (nav,),
+        )
         if not self.node.return_client.wait_for_server(timeout_sec=10.0):
             raise WorkflowError('/navigate_to_pose action server unavailable')
 
@@ -886,8 +942,15 @@ def parse_args(argv=None):
     share = Path(get_package_share_directory('ee3033_search_policy'))
     parser = argparse.ArgumentParser(
         description='Interactive real SLAM, target search, and return-home workflow')
-    parser.add_argument('--map-prefix', required=True,
-                        help='Absolute new map prefix, without .yaml/.pgm')
+    map_group = parser.add_mutually_exclusive_group(required=True)
+    map_group.add_argument(
+        '--map-prefix', help='Absolute new map prefix, without .yaml/.pgm')
+    map_group.add_argument(
+        '--existing-map', help='Absolute existing map YAML; skips SLAM/map saving')
+    parser.add_argument('--initial-pose-x', type=float)
+    parser.add_argument('--initial-pose-y', type=float)
+    parser.add_argument('--initial-pose-yaw', type=float,
+                        help='Existing-map initial yaw in radians')
     parser.add_argument('--navigation-enabled', required=True, choices=('true',),
                         help='Explicit real-motion authorization; must be true')
     parser.add_argument('--min-confidence', type=float, default=0.55)
@@ -923,6 +986,14 @@ def preflight(args):
         raise WorkflowError('/dev/video0 is missing')
     if not 0.0 < args.min_confidence <= 1.0:
         raise WorkflowError('--min-confidence must be in (0, 1]')
+    pose_override = (
+        args.initial_pose_x, args.initial_pose_y, args.initial_pose_yaw)
+    if args.existing_map is None and any(value is not None for value in pose_override):
+        raise WorkflowError(
+            '--initial-pose-x/y/yaw are valid only with --existing-map')
+    if args.existing_map is not None:
+        prefix = validate_existing_map_yaml(args.existing_map)
+        load_saved_home_pose(prefix, *pose_override)
     if (not math.isfinite(args.start_position_tolerance_m) or
             args.start_position_tolerance_m <= 0):
         raise WorkflowError('--start-position-tolerance-m must be positive')
@@ -950,7 +1021,8 @@ def main(argv=None):
     args = parse_args(argv)
     workflow = None
     try:
-        validate_new_map_prefix(args.map_prefix)
+        if args.map_prefix is not None:
+            validate_new_map_prefix(args.map_prefix)
         preflight(args)
         rclpy.init()
         workflow = RealRobotWorkflow(args)

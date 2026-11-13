@@ -339,6 +339,19 @@ RViz 确认地图覆盖和激光对齐。新场地不复用旧地图或旧覆盖
 已知该 launch 无条件打印 Starting continuous waypoint loop；
 不能仅凭这条提示判断航点循环在跑。Nav2 waypoint_follower 也不是循环派发器。
 
+完整一键流程也可跳过 SLAM，直接使用由该流程保存的地图及同名
+`.run.json` 中记录的 home 位姿：
+
+```bash
+./scripts/run_real_robot_workflow.sh \
+  --existing-map /home/ros2_ws/src/ee3033-search-policy/maps/exam_map_20261113_104119.yaml \
+  --navigation-enabled true
+```
+
+如果地图没有同名 `.run.json`，必须同时传入
+`--initial-pose-x`、`--initial-pose-y`、`--initial-pose-yaw`。已有地图模式不会
+覆盖原地图或原运行摘要；本次搜索写入带时间戳的 `.search_*.run.json`。
+
 [Pi ROS Docker；检查终端 D，启动后的合并关口]
 
 ```bash
