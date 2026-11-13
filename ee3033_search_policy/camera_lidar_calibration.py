@@ -62,6 +62,7 @@ class CalibrationNode(Node):
         self.last_error = 'waiting for target observations'
         self.receipts = {}
         self.adapter_status = ''
+        self.desired_state = 'IDLE'
         self.lock = threading.Lock()
         self.buffer = Buffer()
         self.listener = TransformListener(self.buffer, self)
@@ -89,6 +90,7 @@ class CalibrationNode(Node):
                                  self._adapter_status, latched_qos)
         self.create_subscription(TargetObservation, '/target/observation',
                                  self._observation, sensor_qos)
+        self.create_timer(.2, self._publish_desired_state)
 
     def _touch(self, name):
         self.receipts[name] = time.monotonic()
@@ -118,7 +120,11 @@ class CalibrationNode(Node):
             self._touch('scan')
 
     def publish_state(self, state):
-        self.state_pub.publish(String(data=str(state)))
+        self.desired_state = str(state).strip().upper()
+        self._publish_desired_state()
+
+    def _publish_desired_state(self):
+        self.state_pub.publish(String(data=self.desired_state))
 
     @staticmethod
     def _wait_future(future, timeout, description):
@@ -255,6 +261,7 @@ class CalibrationNode(Node):
         )
 
     def _observation(self, msg):
+        self._touch('observation')
         stamp = msg.header.stamp.sec+msg.header.stamp.nanosec*1e-9
         if self.last_observation_stamp is not None and stamp <= self.last_observation_stamp:
             return
@@ -284,12 +291,13 @@ class CalibrationNode(Node):
             if time.monotonic() >= next_report:
                 print(
                     f'[CAL] collecting {len(samples)}/{self.sample_count}: '
+                    f'adapter={self.adapter_status or "NO_STATUS"}; '
                     f'{last_error or "ready"}', flush=True)
                 next_report = time.monotonic()+2.0
             time.sleep(.1)
         raise WorkflowError(
             f'Measurement timed out ({len(samples)}/{self.sample_count}): '
-            f'{last_error}')
+            f'adapter={self.adapter_status or "NO_STATUS"}; {last_error}')
 
 
 class CalibrationWorkflow:

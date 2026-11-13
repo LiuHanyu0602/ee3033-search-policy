@@ -57,3 +57,7 @@ def test_new_entry_is_isolated_from_proven_real_workflow():
     assert 'target_mission_coordinator' not in calibration_launch
     assert 'real_robot_workflow' in real_script
     assert 'camera_lidar_calibration' not in real_script
+    calibration_source = (
+        root/'ee3033_search_policy'/'camera_lidar_calibration.py').read_text()
+    assert "self.create_timer(.2, self._publish_desired_state)" in calibration_source
+    assert 'adapter={self.adapter_status' in calibration_source
