@@ -124,6 +124,10 @@ def test_workflow_contains_complete_owned_process_sequence():
     assert 'localization candidate: method=' in workflow
     assert 'mapping start recorded:' in workflow
     assert 'mapping return check:' in workflow
+    assert 'target coordinate:' in workflow
+    assert 'start coordinate:' in workflow
+    assert 'start-to-target Euclidean distance:' in workflow
+    assert 'math.hypot(' in workflow
     assert 'consecutive >= 3' in workflow
     assert "'/amcl_pose'" in workflow
     assert 'amcl_pose_history' in workflow

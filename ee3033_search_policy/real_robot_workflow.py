@@ -644,9 +644,19 @@ class RealRobotWorkflow:
         if self.node.estimate is None or not self.node.estimate.valid:
             raise WorkflowError('FINISHED without a retained valid target estimate')
         estimate = self.node.estimate
+        start_to_target_distance = math.hypot(
+            estimate.position.x-home.x,
+            estimate.position.y-home.y,
+        )
         self.info(
-            f'target: x={estimate.position.x:.3f}, y={estimate.position.y:.3f}, '
+            f'target coordinate: x={estimate.position.x:.3f}, '
+            f'y={estimate.position.y:.3f}, '
             f'method={estimate.method}')
+        self.info(
+            f'start coordinate: x={home.x:.3f}, y={home.y:.3f}')
+        self.info(
+            f'start-to-target Euclidean distance: '
+            f'{start_to_target_distance:.3f} m')
         self.summary['estimate'] = {
             'x': estimate.position.x,
             'y': estimate.position.y,
